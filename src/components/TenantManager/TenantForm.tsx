@@ -37,17 +37,17 @@ export function TenantForm({ onCreate }: Props) {
 
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 space-y-3">
-      <h3 className="text-sm font-semibold text-neutral-100">New Tenant</h3>
-      <div className="grid grid-cols-2 gap-3">
+      <h3 className="text-sm font-semibold text-neutral-100">New Company</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <input
-          className="bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm"
+          className="bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm w-full"
           placeholder="Company name"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
         <input
-          className="bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono"
-          placeholder="tenant-slug"
+          className="bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono w-full"
+          placeholder="company-slug"
           value={slug}
           onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/\s+/g, '-'))}
         />
@@ -59,8 +59,8 @@ export function TenantForm({ onCreate }: Props) {
         value={connStr}
         onChange={(e) => setConnStr(e.target.value)}
       />
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={testConnection} disabled={!connStr}>
             Test Connection
           </Button>
@@ -71,8 +71,8 @@ export function TenantForm({ onCreate }: Props) {
             />
           )}
         </div>
-        <Button onClick={submit} disabled={!slug || !name || !connStr}>
-          Add Tenant
+        <Button onClick={submit} disabled={!slug || !name || !connStr} className="w-full sm:w-auto">
+          Add Company
         </Button>
       </div>
     </div>

@@ -1,22 +1,36 @@
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { initAutoUpdater } from './updater';
+import { createTray, destroyTray } from './tray';
 
 const isDev = !app.isPackaged;
 const VAULT_PATH = path.join(app.getPath('userData'), 'vault.json');
 
+// Set this env var (e.g. `OPEN_DEVTOOLS=1 npm run dev`) if you need DevTools
+// open automatically during development. Normal dev/prod runs never open it.
+const AUTO_OPEN_DEVTOOLS = process.env.OPEN_DEVTOOLS === '1';
+
 let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
+
+// ---------------------------------------------------------------------------
+// Remove the default "File / Edit / View / Window / Help" menu bar entirely.
+// Must be called before any window is created.
+// ---------------------------------------------------------------------------
+Menu.setApplicationMenu(null);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 860,
-    minWidth: 1024,
-    minHeight: 640,
+    minWidth: 900,
+    minHeight: 560,
     backgroundColor: '#0A0B0F',
     titleBarStyle: 'hiddenInset',
+    autoHideMenuBar: true, // extra safety net on Windows/Linux
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -25,12 +39,31 @@ function createWindow() {
     },
   });
 
+  // Belt-and-suspenders: some platforms still render a 1px menu unless this
+  // is also called on the window instance itself.
+  mainWindow.setMenu(null);
+  mainWindow.setMenuBarVisibility(false);
+
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    if (AUTO_OPEN_DEVTOOLS) mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+  });
+
+  // Close (X) button minimizes to tray instead of quitting, so the app can
+  // keep syncing in the background. Real quit happens via tray "Exit" or
+  // app.quit() (e.g. from an update install).
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      mainWindow?.hide();
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -42,13 +75,61 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  createTray({
+    getWindow: () => mainWindow,
+    onShow: () => {
+      if (!mainWindow) return createWindow();
+      mainWindow.show();
+      mainWindow.focus();
+    },
+    onRestart: () => {
+      app.relaunch();
+      isQuitting = true;
+      app.quit();
+    },
+    onQuit: () => {
+      isQuitting = true;
+      app.quit();
+    },
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else mainWindow?.show();
   });
 });
 
+app.on('before-quit', () => {
+  isQuitting = true;
+  destroyTray();
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // Tray keeps the app alive on Windows/Linux; on macOS this is default
+  // behaviour anyway. Actual quit is only triggered via tray/menu "Exit".
+  if (process.platform !== 'darwin' && isQuitting) app.quit();
+});
+
+// ---------------------------------------------------------------------------
+// Window control IPC (used by the custom in-app title bar, since the native
+// menu bar / traffic lights are hidden)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+ipcMain.handle('window:maximizeToggle', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+});
+ipcMain.handle('window:hide', () => mainWindow?.hide());
+ipcMain.handle('window:restartApp', () => {
+  app.relaunch();
+  isQuitting = true;
+  app.quit();
+});
+ipcMain.handle('window:quitApp', () => {
+  isQuitting = true;
+  app.quit();
 });
 
 // ---------------------------------------------------------------------------

@@ -19,10 +19,10 @@ export function EndpointEditor({ endpoint, onChange }: Props) {
     .filter(Boolean);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
+    <div className="space-y-4 min-w-0">
+      <div className="flex flex-col sm:flex-row gap-3">
         <select
-          className="bg-surface-card border border-surface-border rounded-md px-2.5 py-2 text-sm font-semibold text-neutral-100"
+          className="bg-surface-card border border-surface-border rounded-md px-2.5 py-2 text-sm font-semibold text-neutral-100 sm:w-auto w-full"
           value={endpoint.method}
           onChange={(e) => onChange({ method: e.target.value as HttpMethod })}
         >
@@ -33,7 +33,7 @@ export function EndpointEditor({ endpoint, onChange }: Props) {
           ))}
         </select>
         <input
-          className="flex-1 bg-surface-card border border-surface-border rounded-md px-3 py-2 text-sm font-mono text-neutral-100"
+          className="flex-1 min-w-0 bg-surface-card border border-surface-border rounded-md px-3 py-2 text-sm font-mono text-neutral-100"
           placeholder="/branches/:branchId/sales"
           value={endpoint.pathTemplate}
           onChange={(e) => onChange({ pathTemplate: e.target.value })}
@@ -47,7 +47,7 @@ export function EndpointEditor({ endpoint, onChange }: Props) {
         onChange={(e) => onChange({ name: e.target.value })}
       />
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         <ParamMapper
           title="URL Params"
           hint="From the path, e.g. :branchId"
@@ -68,7 +68,7 @@ export function EndpointEditor({ endpoint, onChange }: Props) {
         />
       </div>
 
-      <div>
+      <div className="min-w-0">
         <h4 className="text-sm font-medium text-neutral-100 mb-1.5">MSSQL Query</h4>
         <MonacoSqlEditor
           value={endpoint.sqlQuery}
@@ -77,7 +77,7 @@ export function EndpointEditor({ endpoint, onChange }: Props) {
         />
       </div>
 
-      <div className="flex items-center gap-6 pt-1">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 pt-1">
         <label className="flex items-center gap-2 text-sm text-neutral-300">
           <input
             type="checkbox"

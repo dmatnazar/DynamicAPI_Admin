@@ -28,3 +28,14 @@ contextBridge.exposeInMainWorld('updaterAPI', {
 contextBridge.exposeInMainWorld('appAPI', {
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
 });
+
+// Window chrome controls — needed because the native menu bar / traffic
+// lights are hidden; the in-app title bar (src/components/TitleBar.tsx)
+// calls these instead.
+contextBridge.exposeInMainWorld('windowAPI', {
+  minimize: () => ipcRenderer.invoke('window:minimize'),
+  maximizeToggle: () => ipcRenderer.invoke('window:maximizeToggle'),
+  hide: () => ipcRenderer.invoke('window:hide'),
+  restartApp: () => ipcRenderer.invoke('window:restartApp'),
+  quitApp: () => ipcRenderer.invoke('window:quitApp'),
+});

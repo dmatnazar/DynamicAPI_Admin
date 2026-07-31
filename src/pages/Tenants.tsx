@@ -7,12 +7,12 @@ export function TenantsPage() {
   const { tenants, activeTenantId, addTenant, setActiveTenant } = useTenantStore();
 
   return (
-    <div className="grid grid-cols-3 gap-6 p-6">
-      <div className="col-span-1 space-y-4">
-        <h2 className="text-lg font-semibold text-neutral-100">Tenants</h2>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-4 sm:p-6">
+      <div className="lg:col-span-1 space-y-4">
+        <h2 className="text-lg font-semibold text-neutral-100">Companies</h2>
         <TenantList tenants={tenants} activeId={activeTenantId} onSelect={setActiveTenant} />
       </div>
-      <div className="col-span-2">
+      <div className="lg:col-span-2">
         <TenantForm
           onCreate={(t) =>
             addTenant({ id: crypto.uuid(), connectionStatus: 'success', ...t })

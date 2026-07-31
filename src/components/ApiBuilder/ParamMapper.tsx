@@ -25,34 +25,37 @@ export function ParamMapper({ title, hint, params, onChange }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-surface-border bg-surface-card p-3">
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h4 className="text-sm font-medium text-neutral-100">{title}</h4>
-          <p className="text-xs text-neutral-500">{hint}</p>
+    <div className="rounded-lg border border-surface-border bg-surface-card p-3 min-w-0">
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div className="min-w-0">
+          <h4 className="text-sm font-medium text-neutral-100 truncate">{title}</h4>
+          <p className="text-xs text-neutral-500 truncate">{hint}</p>
         </div>
-        <Button variant="ghost" onClick={addParam} className="!p-1.5">
+        <Button variant="ghost" onClick={addParam} className="!p-1.5 shrink-0">
           <Plus size={16} />
         </Button>
       </div>
 
       <div className="space-y-2">
         {params.map((p, idx) => (
-          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+          <div
+            key={idx}
+            className="flex flex-wrap items-center gap-1.5 rounded-md border border-surface-border/60 p-1.5"
+          >
             <input
-              className="col-span-3 bg-surface-raised border border-surface-border rounded-md px-2 py-1.5 text-xs text-neutral-100"
+              className="flex-1 min-w-[90px] bg-surface-raised border border-surface-border rounded-md px-2 py-1.5 text-xs text-neutral-100"
               placeholder="paramName"
               value={p.name}
               onChange={(e) => updateParam(idx, { name: e.target.value })}
             />
             <input
-              className="col-span-3 bg-surface-raised border border-surface-border rounded-md px-2 py-1.5 text-xs font-mono text-accent"
+              className="flex-1 min-w-[90px] bg-surface-raised border border-surface-border rounded-md px-2 py-1.5 text-xs font-mono text-accent"
               placeholder="@sqlVar"
               value={p.sqlParam}
               onChange={(e) => updateParam(idx, { sqlParam: e.target.value })}
             />
             <select
-              className="col-span-2 bg-surface-raised border border-surface-border rounded-md px-2 py-1.5 text-xs text-neutral-100"
+              className="min-w-[84px] bg-surface-raised border border-surface-border rounded-md px-2 py-1.5 text-xs text-neutral-100"
               value={p.type}
               onChange={(e) => updateParam(idx, { type: e.target.value as ParamDef['type'] })}
             >
@@ -62,7 +65,7 @@ export function ParamMapper({ title, hint, params, onChange }: Props) {
                 </option>
               ))}
             </select>
-            <label className="col-span-2 flex items-center gap-1.5 text-xs text-neutral-400">
+            <label className="flex items-center gap-1.5 text-xs text-neutral-400 shrink-0">
               <input
                 type="checkbox"
                 checked={p.required}
@@ -72,7 +75,7 @@ export function ParamMapper({ title, hint, params, onChange }: Props) {
             </label>
             <button
               onClick={() => removeParam(idx)}
-              className="col-span-2 flex items-center justify-center text-neutral-500 hover:text-red-400"
+              className="ml-auto shrink-0 flex items-center justify-center text-neutral-500 hover:text-red-400 p-1"
             >
               <Trash2 size={14} />
             </button>

@@ -22,5 +22,12 @@ declare global {
     appAPI: {
       getVersion: () => Promise<string>;
     };
+    windowAPI: {
+      minimize: () => Promise<void>;
+      maximizeToggle: () => Promise<void>;
+      hide: () => Promise<void>;
+      restartApp: () => Promise<void>;
+      quitApp: () => Promise<void>;
+    };
   }
 }
