@@ -2,9 +2,27 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+    <!--
+      connect-src added: without it, fetch()/XHR falls back to default-src
+      'self', which only allows requests back to the app's own file:// origin.
+      That's why "Test connection" / sync showed "failed" even though the
+      gateway answered fine to curl — Electron's renderer was silently
+      blocking the request. This app is a private admin tool that talks to a
+      gateway address the user configures themselves (localhost during dev,
+      their own VPS in production), so we allow any http/https target here.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http: https:;"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dynamic API Admin</title>
+    <!-- SQL query editor (CodeMirror 5, self-hosted — see public/vendor/codemirror).
+         codemirror.min.js must run before sql.min.js (global, not a module). -->
+    <link rel="stylesheet" href="/vendor/codemirror/css/codemirror.min.css" />
+    <link rel="stylesheet" href="/vendor/codemirror/css/material-darker.min.css" />
+    <script src="/vendor/codemirror/codemirror.min.js"></script>
+    <script src="/vendor/codemirror/sql.min.js"></script>
   </head>
   <body class="bg-surface text-neutral-100">
     <div id="root"></div>

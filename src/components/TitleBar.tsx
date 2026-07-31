@@ -1,4 +1,4 @@
-import { Minus, Square, X, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 
 export function TitleBar() {
   return (
@@ -14,33 +14,16 @@ export function TitleBar() {
         className="flex items-center gap-0.5"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
+        {/* Minimize / maximize / close-to-tray removed on purpose — window
+            chrome is hidden, so those live in the system tray's right-click
+            menu (electron/tray.ts) instead. Restart is the only action that
+            needs to be one click away from inside the app. */}
         <button
           title="Restart app"
           onClick={() => window.windowAPI.restartApp()}
           className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-neutral-200 hover:bg-surface-card rounded transition"
         >
           <RotateCcw size={13} />
-        </button>
-        <button
-          title="Minimize"
-          onClick={() => window.windowAPI.minimize()}
-          className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-neutral-200 hover:bg-surface-card rounded transition"
-        >
-          <Minus size={14} />
-        </button>
-        <button
-          title="Maximize / Restore"
-          onClick={() => window.windowAPI.maximizeToggle()}
-          className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-neutral-200 hover:bg-surface-card rounded transition"
-        >
-          <Square size={11} />
-        </button>
-        <button
-          title="Close to tray"
-          onClick={() => window.windowAPI.hide()}
-          className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-white hover:bg-red-600 rounded transition"
-        >
-          <X size={14} />
         </button>
       </div>
     </div>

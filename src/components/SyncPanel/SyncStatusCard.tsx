@@ -15,6 +15,8 @@ export function SyncStatusCard({ gatewayUrl, adminSecret, tenant, endpoints }: P
   const [state, setState] = useState<'idle' | 'syncing' | 'success' | 'failed'>('idle');
   const [message, setMessage] = useState('');
 
+  const hasActiveConnection = !!tenant?.connections.find((c) => c.id === tenant.activeConnectionId);
+
   const handleSync = async () => {
     if (!tenant) return;
     setState('syncing');
@@ -42,8 +44,17 @@ export function SyncStatusCard({ gatewayUrl, adminSecret, tenant, endpoints }: P
       <p className="text-xs text-neutral-500">
         Target: <span className="font-mono text-neutral-400">{gatewayUrl}</span>
       </p>
+      {tenant && !hasActiveConnection && (
+        <p className="text-xs text-amber-400">
+          Bu kompaniýada işjeň (esasy) database connection ýok — Companies sahypasynda goş.
+        </p>
+      )}
       {message && <p className="text-xs text-neutral-400 break-words">{message}</p>}
-      <Button onClick={handleSync} disabled={!tenant || state === 'syncing'} className="w-full">
+      <Button
+        onClick={handleSync}
+        disabled={!tenant || !hasActiveConnection || state === 'syncing'}
+        className="w-full"
+      >
         {state === 'syncing' ? 'Syncing…' : 'One-Click Sync to VPS'}
       </Button>
     </div>

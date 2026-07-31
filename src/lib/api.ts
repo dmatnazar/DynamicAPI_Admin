@@ -1,4 +1,5 @@
 import type { TenantConfig, EndpointConfig } from '../types/endpoint.types';
+import { buildMssqlConnectionString } from '../types/endpoint.types';
 
 export interface SyncResult {
   status: 'success' | 'failed';
@@ -19,10 +20,17 @@ export async function syncToVps(
   endpoints: EndpointConfig[],
   includeConnectionString: boolean
 ): Promise<SyncResult> {
+  const activeConnection = tenant.connections.find((c) => c.id === tenant.activeConnectionId);
+  if (includeConnectionString && !activeConnection) {
+    throw new Error('This company has no active database connection to sync yet.');
+  }
+
   const payload = {
     tenantSlug: tenant.slug,
     tenantName: tenant.name,
-    ...(includeConnectionString ? { dbConnectionString: tenant.dbConnectionString } : {}),
+    ...(includeConnectionString && activeConnection
+      ? { dbConnectionString: buildMssqlConnectionString(activeConnection) }
+      : {}),
     endpoints: endpoints.map((e) => ({
       name: e.name,
       method: e.method,

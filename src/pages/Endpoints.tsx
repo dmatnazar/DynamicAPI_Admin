@@ -3,6 +3,7 @@ import { useTenantStore } from '../store/useTenantStore';
 import { useEndpointStore } from '../store/useEndpointStore';
 import { EndpointList } from '../components/ApiBuilder/EndpointList';
 import { EndpointEditor } from '../components/ApiBuilder/EndpointEditor';
+import { QueryEditorPage } from '../components/ApiBuilder/QueryEditorPage';
 import { SyncStatusCard } from '../components/SyncPanel/SyncStatusCard';
 import { Button } from '../components/ui/Button';
 import uuid from '../lib/uuid';
@@ -32,6 +33,7 @@ export function EndpointsPage() {
 
   const [gatewayUrl, setGatewayUrl] = useState(DEFAULT_GATEWAY_URL);
   const [adminSecret, setAdminSecret] = useState('');
+  const [queryEditorOpen, setQueryEditorOpen] = useState(false);
 
   // Gateway URL / secret now live in Settings (see src/pages/Settings.tsx),
   // stored via the encrypted OS vault instead of being hardcoded here.
@@ -43,11 +45,36 @@ export function EndpointsPage() {
   const endpoints = activeTenantId ? endpointsByTenant[activeTenantId] ?? [] : [];
   const activeEndpoint = endpoints.find((e) => e.id === activeEndpointId) ?? null;
 
+  // Close the query editor automatically if the underlying endpoint disappears
+  // (e.g. switched company) so we never render it against stale data.
+  useEffect(() => {
+    if (!activeEndpoint) setQueryEditorOpen(false);
+  }, [activeEndpoint]);
+
   if (!activeTenant) {
     return (
       <div className="p-4 sm:p-6">
         <p className="text-sm text-neutral-500">Select or create a company first (Companies tab).</p>
       </div>
+    );
+  }
+
+  if (queryEditorOpen && activeEndpoint) {
+    const availableParams = [
+      ...activeEndpoint.paramsSchema.urlParams,
+      ...activeEndpoint.paramsSchema.queryParams,
+      ...activeEndpoint.paramsSchema.bodyParams,
+    ]
+      .map((p) => p.sqlParam)
+      .filter(Boolean);
+
+    return (
+      <QueryEditorPage
+        endpoint={activeEndpoint}
+        availableParams={availableParams}
+        onSave={(sqlQuery) => updateEndpoint(activeTenant.id, activeEndpoint.id, { sqlQuery })}
+        onClose={() => setQueryEditorOpen(false)}
+      />
     );
   }
 
@@ -80,6 +107,7 @@ export function EndpointsPage() {
           <EndpointEditor
             endpoint={activeEndpoint}
             onChange={(patch) => updateEndpoint(activeTenant.id, activeEndpoint.id, patch)}
+            onOpenQueryEditor={() => setQueryEditorOpen(true)}
           />
         ) : (
           <p className="text-sm text-neutral-500">Select an endpoint on the left, or create a new one.</p>
