@@ -56,7 +56,7 @@ penjire açylmaly. Eger açylmasa, terminaldaky ýalňyşlyk ýazgylaryny barla�
 
 ```ts
 const GATEWAY_URL = 'http://localhost:4000';
-const ADMIN_SYNC_SECRET = 'test_admin_secret_1234567890';
+const ADMIN_SYNC_SECRET = 'e4a7d1c9b3f802e5a6c1b4f9d0e2a3c5b8f1d4e7a0c3b6f9e2d5a8c1b4f702e5';
 ```
 
 - `GATEWAY_URL` — gateway proýektiňiziň işleýän salgysy
