@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, Building2, Network, Settings as SettingsIcon, Menu as MenuIcon } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Building2,
+  Users,
+  Network,
+  Settings as SettingsIcon,
+  Menu as MenuIcon,
+} from 'lucide-react';
 import { TitleBar } from './components/TitleBar';
 import { UpdateModal } from './components/UpdateModal';
 import { DashboardPage } from './pages/Dashboard';
 import { TenantsPage } from './pages/Tenants';
+import { StaffPage } from './pages/Staff';
 import { EndpointsPage } from './pages/Endpoints';
 import { SettingsPage } from './pages/Settings';
 
-type Tab = 'dashboard' | 'tenants' | 'endpoints' | 'settings';
+type Tab = 'dashboard' | 'tenants' | 'staff' | 'endpoints' | 'settings';
 
 const NAV: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'tenants', label: 'Companies', icon: Building2 },
+  { id: 'staff', label: 'Işgärler', icon: Users },
   { id: 'endpoints', label: 'API Builder', icon: Network },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
@@ -97,6 +106,7 @@ export default function App() {
         <main className="flex-1 min-w-0 overflow-y-auto">
           {tab === 'dashboard' && <DashboardPage />}
           {tab === 'tenants' && <TenantsPage />}
+          {tab === 'staff' && <StaffPage />}
           {tab === 'endpoints' && <EndpointsPage />}
           {tab === 'settings' && <SettingsPage />}
         </main>

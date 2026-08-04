@@ -10,6 +10,10 @@ declare global {
     cryptoAPI: {
       signPayload: (payload: unknown, secret: string) => Promise<string>;
     };
+    staffAPI: {
+      hashPassword: (plain: string) => Promise<string>;
+      verifyPassword: (plain: string, stored: string) => Promise<boolean>;
+    };
     updaterAPI: {
       check: () => Promise<void>;
       download: () => Promise<void>;

@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld('cryptoAPI', {
     ipcRenderer.invoke('crypto:signPayload', payload, secret),
 });
 
+contextBridge.exposeInMainWorld('staffAPI', {
+  hashPassword: (plain: string) => ipcRenderer.invoke('staff:hashPassword', plain),
+  verifyPassword: (plain: string, stored: string) =>
+    ipcRenderer.invoke('staff:verifyPassword', plain, stored),
+});
+
 contextBridge.exposeInMainWorld('updaterAPI', {
   check: () => ipcRenderer.invoke('updater:check'),
   download: () => ipcRenderer.invoke('updater:download'),

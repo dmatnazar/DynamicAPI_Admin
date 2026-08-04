@@ -185,4 +185,26 @@ ipcMain.handle('crypto:signPayload', (_e, payload: unknown, secret: string) => {
   return crypto.createHmac('sha256', secret).update(body).digest('hex');
 });
 
+// ---------------------------------------------------------------------------
+// Staff password hashing (scrypt + per-password salt), done in the main
+// process so plaintext passwords never need a renderer-side crypto
+// implementation and never get logged to the (less trusted) renderer.
+// Stored format: "<saltHex>:<hashHex>"
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('staff:hashPassword', (_e, plain: string) => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(plain, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+});
+
+ipcMain.handle('staff:verifyPassword', (_e, plain: string, stored: string) => {
+  const [salt, hash] = (stored || '').split(':');
+  if (!salt || !hash) return false;
+  const candidate = crypto.scryptSync(plain, salt, 64).toString('hex');
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(candidate, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+});
+
 ipcMain.handle('app:getVersion', () => app.getVersion());

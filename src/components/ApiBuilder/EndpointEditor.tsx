@@ -1,5 +1,5 @@
 import type { EndpointConfig, HttpMethod } from '../../types/endpoint.types';
-import { MonacoSqlEditor } from './MonacoSqlEditor';
+import { SqlEditor } from './SqlEditor';
 import { ParamMapper } from './ParamMapper';
 
 interface Props {
@@ -70,7 +70,7 @@ export function EndpointEditor({ endpoint, onChange }: Props) {
 
       <div className="min-w-0">
         <h4 className="text-sm font-medium text-neutral-100 mb-1.5">MSSQL Query</h4>
-        <MonacoSqlEditor
+        <SqlEditor
           value={endpoint.sqlQuery}
           onChange={(v) => onChange({ sqlQuery: v })}
           availableParams={allParams}

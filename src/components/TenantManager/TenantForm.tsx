@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import type { TenantConfig } from '../../types/endpoint.types';
 
 interface Props {
-  onCreate: (tenant: Omit<TenantConfig, 'id' | 'connectionStatus'>) => void;
+  onCreate: (input: { slug: string; name: string; connectionString: string }) => void;
 }
 
 export function TenantForm({ onCreate }: Props) {
@@ -28,7 +27,7 @@ export function TenantForm({ onCreate }: Props) {
 
   const submit = () => {
     if (!slug || !name || !connStr) return;
-    onCreate({ slug, name, dbConnectionString: connStr });
+    onCreate({ slug, name, connectionString: connStr });
     setSlug('');
     setName('');
     setConnStr('');
@@ -59,6 +58,10 @@ export function TenantForm({ onCreate }: Props) {
         value={connStr}
         onChange={(e) => setConnStr(e.target.value)}
       />
+      <p className="text-[11px] text-neutral-600">
+        This becomes the company's primary connection. You can add more (e.g. a reporting
+        replica) from the Connections panel right after the company is created.
+      </p>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={testConnection} disabled={!connStr}>
