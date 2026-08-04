@@ -20,10 +20,18 @@ export async function syncToVps(
   endpoints: EndpointConfig[],
   includeConnectionString: boolean
 ): Promise<SyncResult> {
-  const activeConnection = tenant.connections.find((c) => c.id === tenant.activeConnectionId);
+  const activeConnection =
+    tenant.connections.find((c) => c.isPrimary) ?? tenant.connections[0];
+
   if (includeConnectionString && !activeConnection) {
     throw new Error('This company has no active database connection to sync yet.');
   }
+
+  const slugify = (s: string) =>
+    (s || 'primary')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'primary';
 
   const payload = {
     tenantSlug: tenant.slug,
@@ -31,16 +39,36 @@ export async function syncToVps(
     ...(includeConnectionString && activeConnection
       ? { dbConnectionString: buildMssqlConnectionString(activeConnection) }
       : {}),
-    endpoints: endpoints.map((e) => ({
-      name: e.name,
-      method: e.method,
-      pathTemplate: e.pathTemplate,
-      sqlQuery: e.sqlQuery,
-      paramsSchema: e.paramsSchema,
-      responseSchema: e.responseSchema,
-      cacheTtlSec: e.cacheTtlSec,
-      authRequired: e.authRequired,
-    })),
+    ...(includeConnectionString
+      ? {
+          connections: tenant.connections.map((c) => ({
+            dbKey: slugify(c.label || c.database || 'primary'),
+            label: c.label,
+            database: c.database,
+            connectionString: buildMssqlConnectionString(c),
+            isPrimary: c.isPrimary,
+          })),
+        }
+      : {}),
+    endpoints: endpoints.map((e) => {
+      const conn =
+        tenant.connections.find((c) => c.id === e.connectionId) ||
+        tenant.connections.find((c) => c.isPrimary) ||
+        tenant.connections[0];
+      return {
+        name: e.name,
+        method: e.method,
+        pathTemplate: e.pathTemplate,
+        sqlQuery: e.sqlQuery,
+        paramsSchema: e.paramsSchema,
+        responseSchema: e.responseSchema,
+        cacheTtlSec: e.cacheTtlSec,
+        authRequired: e.authRequired,
+        connectionId: e.connectionId || conn?.id,
+        dbKey: slugify(conn?.label || conn?.database || 'primary'),
+        database: conn?.database,
+      };
+    }),
   };
 
   const signature = await window.cryptoAPI.signPayload(payload, adminSecret);

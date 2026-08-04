@@ -8,37 +8,51 @@ interface StaffStore {
   updateStaff: (id: string, patch: Partial<StaffMember>) => void;
   removeStaff: (id: string) => void;
   setActiveStaff: (id: string | null) => void;
-  /** Remove a company from every staff member's access list — call this
-   *  from removeTenant flows if you want to keep staff access consistent
-   *  when a company is deleted. */
   revokeTenantFromAllStaff: (tenantId: string) => void;
 }
 
-export const useStaffStore = create<StaffStore>((set) => ({
+async function persist(member: StaffMember) {
+  if (!window.dbAPI) return;
+  await window.dbAPI.upsertStaff({
+    ...member,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export const useStaffStore = create<StaffStore>((set, get) => ({
   staff: [],
   activeStaffId: null,
 
-  addStaff: (member) =>
-    set((s) => ({ staff: [...s.staff, member], activeStaffId: member.id })),
+  addStaff: (member) => {
+    set((s) => ({ staff: [...s.staff, member], activeStaffId: member.id }));
+    void persist(member);
+  },
 
-  updateStaff: (id, patch) =>
+  updateStaff: (id, patch) => {
     set((s) => ({
       staff: s.staff.map((m) => (m.id === id ? { ...m, ...patch } : m)),
-    })),
+    }));
+    const m = get().staff.find((x) => x.id === id);
+    if (m) void persist(m);
+  },
 
-  removeStaff: (id) =>
+  removeStaff: (id) => {
     set((s) => ({
       staff: s.staff.filter((m) => m.id !== id),
       activeStaffId: s.activeStaffId === id ? null : s.activeStaffId,
-    })),
+    }));
+    void window.dbAPI?.deleteStaff(id);
+  },
 
   setActiveStaff: (id) => set({ activeStaffId: id }),
 
   revokeTenantFromAllStaff: (tenantId) =>
-    set((s) => ({
-      staff: s.staff.map((m) => ({
+    set((s) => {
+      const next = s.staff.map((m) => ({
         ...m,
         tenantIds: m.tenantIds.filter((t) => t !== tenantId),
-      })),
-    })),
+      }));
+      for (const m of next) void persist(m);
+      return { staff: next };
+    }),
 }));

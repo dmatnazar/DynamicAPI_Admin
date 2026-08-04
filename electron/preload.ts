@@ -35,13 +35,47 @@ contextBridge.exposeInMainWorld('appAPI', {
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
 });
 
-// Window chrome controls — needed because the native menu bar / traffic
-// lights are hidden; the in-app title bar (src/components/TitleBar.tsx)
-// calls these instead.
 contextBridge.exposeInMainWorld('windowAPI', {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   maximizeToggle: () => ipcRenderer.invoke('window:maximizeToggle'),
   hide: () => ipcRenderer.invoke('window:hide'),
   restartApp: () => ipcRenderer.invoke('window:restartApp'),
   quitApp: () => ipcRenderer.invoke('window:quitApp'),
+});
+
+/** Local database API — companies, connections, staff, endpoints, settings */
+contextBridge.exposeInMainWorld('mssqlAPI', {
+  testConnection: (input: {
+    host: string;
+    port?: number;
+    database?: string;
+    username: string;
+    password: string;
+    encrypt?: boolean;
+    trustServerCertificate?: boolean;
+  }) => ipcRenderer.invoke('mssql:testConnection', input),
+  listDatabases: (input: {
+    host: string;
+    port?: number;
+    database?: string;
+    username: string;
+    password: string;
+    encrypt?: boolean;
+    trustServerCertificate?: boolean;
+  }) => ipcRenderer.invoke('mssql:listDatabases', input),
+});
+
+contextBridge.exposeInMainWorld('dbAPI', {
+  exportSnapshot: () => ipcRenderer.invoke('db:exportSnapshot'),
+  upsertCompany: (company: unknown) => ipcRenderer.invoke('db:upsertCompany', company),
+  deleteCompany: (id: string) => ipcRenderer.invoke('db:deleteCompany', id),
+  upsertConnection: (conn: unknown) => ipcRenderer.invoke('db:upsertConnection', conn),
+  deleteConnection: (id: string) => ipcRenderer.invoke('db:deleteConnection', id),
+  upsertStaff: (member: unknown) => ipcRenderer.invoke('db:upsertStaff', member),
+  deleteStaff: (id: string) => ipcRenderer.invoke('db:deleteStaff', id),
+  upsertEndpoint: (ep: unknown) => ipcRenderer.invoke('db:upsertEndpoint', ep),
+  deleteEndpoint: (id: string) => ipcRenderer.invoke('db:deleteEndpoint', id),
+  getSettings: () => ipcRenderer.invoke('db:getSettings'),
+  updateSettings: (patch: { gatewayUrl?: string; adminSecret?: string }) =>
+    ipcRenderer.invoke('db:updateSettings', patch),
 });

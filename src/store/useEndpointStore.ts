@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import type { EndpointConfig } from '../types/endpoint.types';
 
 interface EndpointStore {
-  // tenantId -> endpoints
   endpointsByTenant: Record<string, EndpointConfig[]>;
   activeEndpointId: string | null;
   addEndpoint: (tenantId: string, endpoint: EndpointConfig) => void;
@@ -11,18 +10,42 @@ interface EndpointStore {
   setActiveEndpoint: (id: string | null) => void;
 }
 
-export const useEndpointStore = create<EndpointStore>((set) => ({
+async function persist(companyId: string, ep: EndpointConfig) {
+  if (!window.dbAPI) return;
+  const now = new Date().toISOString();
+  await window.dbAPI.upsertEndpoint({
+    id: ep.id,
+    companyId,
+    connectionId: ep.connectionId,
+    name: ep.name,
+    method: ep.method,
+    pathTemplate: ep.pathTemplate,
+    sqlQuery: ep.sqlQuery,
+    paramsSchema: ep.paramsSchema,
+    responseSchema: ep.responseSchema,
+    cacheTtlSec: ep.cacheTtlSec,
+    authRequired: ep.authRequired,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export const useEndpointStore = create<EndpointStore>((set, get) => ({
   endpointsByTenant: {},
   activeEndpointId: null,
-  addEndpoint: (tenantId, endpoint) =>
+
+  addEndpoint: (tenantId, endpoint) => {
     set((s) => ({
       endpointsByTenant: {
         ...s.endpointsByTenant,
         [tenantId]: [...(s.endpointsByTenant[tenantId] ?? []), endpoint],
       },
       activeEndpointId: endpoint.id,
-    })),
-  updateEndpoint: (tenantId, id, patch) =>
+    }));
+    void persist(tenantId, endpoint);
+  },
+
+  updateEndpoint: (tenantId, id, patch) => {
     set((s) => ({
       endpointsByTenant: {
         ...s.endpointsByTenant,
@@ -30,13 +53,20 @@ export const useEndpointStore = create<EndpointStore>((set) => ({
           e.id === id ? { ...e, ...patch } : e
         ),
       },
-    })),
-  removeEndpoint: (tenantId, id) =>
+    }));
+    const ep = get().endpointsByTenant[tenantId]?.find((e) => e.id === id);
+    if (ep) void persist(tenantId, ep);
+  },
+
+  removeEndpoint: (tenantId, id) => {
     set((s) => ({
       endpointsByTenant: {
         ...s.endpointsByTenant,
         [tenantId]: (s.endpointsByTenant[tenantId] ?? []).filter((e) => e.id !== id),
       },
-    })),
+    }));
+    void window.dbAPI?.deleteEndpoint(id);
+  },
+
   setActiveEndpoint: (id) => set({ activeEndpointId: id }),
 }));

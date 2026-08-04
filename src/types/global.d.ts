@@ -15,9 +15,9 @@ declare global {
       verifyPassword: (plain: string, stored: string) => Promise<boolean>;
     };
     updaterAPI: {
-      check: () => Promise<void>;
-      download: () => Promise<void>;
-      install: () => Promise<void>;
+      check: () => Promise<unknown>;
+      download: () => Promise<unknown>;
+      install: () => Promise<unknown>;
       onAvailable: (cb: (info: { version: string }) => void) => void;
       onProgress: (cb: (p: { percent: number }) => void) => void;
       onDownloaded: (cb: (info: { version: string }) => void) => void;
@@ -32,6 +32,48 @@ declare global {
       hide: () => Promise<void>;
       restartApp: () => Promise<void>;
       quitApp: () => Promise<void>;
+    };
+    mssqlAPI: {
+      testConnection: (input: {
+        host: string;
+        port?: number;
+        database?: string;
+        username: string;
+        password: string;
+        encrypt?: boolean;
+        trustServerCertificate?: boolean;
+      }) => Promise<{ ok: true; serverVersion?: string } | { ok: false; message: string }>;
+      listDatabases: (input: {
+        host: string;
+        port?: number;
+        database?: string;
+        username: string;
+        password: string;
+        encrypt?: boolean;
+        trustServerCertificate?: boolean;
+      }) => Promise<{ ok: true; databases: string[] } | { ok: false; message: string }>;
+    };
+    dbAPI: {
+      exportSnapshot: () => Promise<{
+        companies: Array<Record<string, unknown>>;
+        connections: Array<Record<string, unknown>>;
+        staff: Array<Record<string, unknown>>;
+        endpoints: Array<Record<string, unknown>>;
+        settings: { gatewayUrl: string; adminSecret: string };
+      }>;
+      upsertCompany: (company: unknown) => Promise<unknown>;
+      deleteCompany: (id: string) => Promise<boolean>;
+      upsertConnection: (conn: unknown) => Promise<unknown>;
+      deleteConnection: (id: string) => Promise<boolean>;
+      upsertStaff: (member: unknown) => Promise<unknown>;
+      deleteStaff: (id: string) => Promise<boolean>;
+      upsertEndpoint: (ep: unknown) => Promise<unknown>;
+      deleteEndpoint: (id: string) => Promise<boolean>;
+      getSettings: () => Promise<{ gatewayUrl: string; adminSecret: string }>;
+      updateSettings: (patch: {
+        gatewayUrl?: string;
+        adminSecret?: string;
+      }) => Promise<{ gatewayUrl: string; adminSecret: string }>;
     };
   }
 }

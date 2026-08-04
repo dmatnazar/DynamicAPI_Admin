@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 
-// CodeMirror is loaded globally via <script> tags in index.html
-// (public/vendor/codemirror/codemirror.min.js + sql.min.js), so we just
-// read it off window instead of importing an npm package.
 declare global {
   interface Window {
     CodeMirror: any;
@@ -12,21 +9,26 @@ declare global {
 interface Props {
   value: string;
   onChange: (val: string) => void;
-  availableParams: string[]; // e.g. ["@branchID", "@startDate", "@limit"]
+  availableParams: string[];
   autoFocus?: boolean;
-  height?: string; // CSS height, e.g. "100%" or "320px"
+  height?: string;
 }
 
-export function CodeMirrorSqlEditor({ value, onChange, availableParams, autoFocus, height = '100%' }: Props) {
+export function CodeMirrorSqlEditor({
+  value,
+  onChange,
+  availableParams,
+  autoFocus,
+  height = '100%',
+}: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cmRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const paramsRef = useRef(availableParams);
+  paramsRef.current = availableParams;
   const [ready, setReady] = useState(!!window.CodeMirror);
 
-  // CodeMirror + the sql mode attach themselves to window.CodeMirror as soon
-  // as their <script> tags execute (see index.html). In the rare case this
-  // component mounts before that has happened, poll briefly.
   useEffect(() => {
     if (window.CodeMirror) {
       setReady(true);
@@ -44,7 +46,34 @@ export function CodeMirrorSqlEditor({ value, onChange, availableParams, autoFocu
   useEffect(() => {
     if (!ready || !textareaRef.current || cmRef.current) return;
 
-    const cm = window.CodeMirror.fromTextArea(textareaRef.current, {
+    const CM = window.CodeMirror;
+
+    // Hint helper for @params
+    if (CM.hint && !CM.hint.mssqlParams) {
+      CM.hint.mssqlParams = (cm: any) => {
+        const cur = cm.getCursor();
+        const token = cm.getTokenAt(cur);
+        const start = token.start;
+        const end = cur.ch;
+        const word = token.string.slice(0, end - start);
+        const list = (paramsRef.current || [])
+          .filter((p) => p.toLowerCase().includes(word.replace(/^@/, '').toLowerCase()) || p.startsWith('@') && word.startsWith('@'))
+          .map((p) => (p.startsWith('@') ? p : `@${p}`));
+        // Also common SQL keywords
+        const kws = ['SELECT', 'FROM', 'WHERE', 'JOIN', 'ORDER BY', 'GROUP BY', 'INSERT', 'UPDATE', 'DELETE'];
+        const filtered = [
+          ...list,
+          ...kws.filter((k) => k.toLowerCase().startsWith(word.toLowerCase())),
+        ];
+        return {
+          list: filtered.length ? filtered : list.concat(kws),
+          from: CM.Pos(cur.line, start),
+          to: CM.Pos(cur.line, end),
+        };
+      };
+    }
+
+    const cm = CM.fromTextArea(textareaRef.current, {
       mode: 'text/x-mssql',
       theme: 'material-darker',
       lineNumbers: true,
@@ -53,67 +82,138 @@ export function CodeMirrorSqlEditor({ value, onChange, availableParams, autoFocu
       lineWrapping: true,
       matchBrackets: true,
       autofocus: !!autoFocus,
+      // Important for clipboard in Electron
+      inputStyle: 'textarea',
+      extraKeys: {
+        'Ctrl-Space': 'autocomplete',
+        'Cmd-Space': 'autocomplete',
+        'Ctrl-A': 'selectAll',
+        'Cmd-A': 'selectAll',
+        // Explicit copy/paste bindings (Electron sometimes needs these)
+        'Ctrl-C': (cmInstance: any) => {
+          const text = cmInstance.getSelection() || cmInstance.getValue();
+          navigator.clipboard?.writeText(text);
+          return true; // don't prevent default fully — allow native too
+        },
+        'Cmd-C': (cmInstance: any) => {
+          const text = cmInstance.getSelection() || cmInstance.getValue();
+          navigator.clipboard?.writeText(text);
+        },
+        'Ctrl-V': async (cmInstance: any) => {
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text) cmInstance.replaceSelection(text);
+          } catch {
+            // fall through to native paste
+            return CM.Pass;
+          }
+        },
+        'Cmd-V': async (cmInstance: any) => {
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text) cmInstance.replaceSelection(text);
+          } catch {
+            return CM.Pass;
+          }
+        },
+        'Ctrl-X': (cmInstance: any) => {
+          const text = cmInstance.getSelection();
+          if (text) {
+            navigator.clipboard?.writeText(text);
+            cmInstance.replaceSelection('');
+          }
+        },
+        'Cmd-X': (cmInstance: any) => {
+          const text = cmInstance.getSelection();
+          if (text) {
+            navigator.clipboard?.writeText(text);
+            cmInstance.replaceSelection('');
+          }
+        },
+      },
+      hintOptions: {
+        completeSingle: false,
+        hint: CM.hint?.mssqlParams,
+      },
     });
+
     cm.setValue(value ?? '');
     cm.on('change', (instance: any) => {
       onChangeRef.current(instance.getValue());
     });
-    cmRef.current = cm;
 
-    // Give the editor its sizing after it's actually in the DOM.
-    requestAnimationFrame(() => cm.refresh());
+    // Trigger hints when typing @
+    cm.on('inputRead', (instance: any, change: any) => {
+      if (change.text[0] === '@' || (change.text[0] && change.text[0].includes('@'))) {
+        CM.showHint?.(instance, CM.hint.mssqlParams, { completeSingle: false });
+      }
+    });
+
+    cmRef.current = cm;
+    requestAnimationFrame(() => {
+      cm.refresh();
+      cm.focus();
+    });
 
     return () => {
       cmRef.current = null;
-      cm.toTextArea();
+      try {
+        cm.toTextArea();
+      } catch {
+        /* ignore */
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  // Keep the editor in sync if `value` changes from outside (e.g. switching
-  // to a different endpoint) without fighting the user's own typing.
   useEffect(() => {
     const cm = cmRef.current;
     if (!cm) return;
     if (cm.getValue() !== value) {
       const cursor = cm.getCursor();
       cm.setValue(value ?? '');
-      cm.setCursor(cursor);
+      try {
+        cm.setCursor(cursor);
+      } catch {
+        /* ignore */
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  const insertParam = (param: string) => {
+  useEffect(() => {
     const cm = cmRef.current;
     if (!cm) return;
-    cm.replaceSelection(param);
-    cm.focus();
-  };
+    const el = cm.getWrapperElement?.();
+    if (el) {
+      el.style.height = height;
+      cm.refresh();
+    }
+  }, [height, ready]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 rounded-lg overflow-hidden border border-surface-border bg-surface-raised">
-      {availableParams.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-2 border-b border-surface-border bg-surface-card shrink-0">
-          <span className="text-[11px] text-neutral-500 mr-1">Insert param:</span>
-          {availableParams.map((p) => (
-            <button
-              key={p}
-              onClick={() => insertParam(p)}
-              className="text-[11px] font-mono px-2 py-1 rounded-md bg-surface-raised border border-surface-border text-accent hover:bg-surface-border transition"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
+    <div className="h-full w-full relative" style={{ minHeight: 180 }}>
+      <textarea
+        ref={textareaRef}
+        defaultValue={value}
+        className="w-full h-full bg-surface-raised text-neutral-100 font-mono text-sm p-3"
+        spellCheck={false}
+        // Native fallback when CodeMirror not ready — allows paste
+        onChange={(e) => {
+          if (!cmRef.current) onChange(e.target.value);
+        }}
+        onPaste={(e) => {
+          // Ensure paste works on fallback textarea
+          if (!cmRef.current) {
+            const text = e.clipboardData.getData('text');
+            if (text) {
+              // let default happen
+            }
+          }
+        }}
+      />
+      {!ready && (
+        <p className="absolute bottom-2 right-2 text-[10px] text-neutral-600">CodeMirror ýüklenýär…</p>
       )}
-      <div className="flex-1 min-h-0" style={{ height }}>
-        {!ready && (
-          <div className="h-full flex items-center justify-center text-xs text-neutral-500">
-            Editor loading…
-          </div>
-        )}
-        <textarea ref={textareaRef} defaultValue={value} className={ready ? '' : 'hidden'} />
-      </div>
     </div>
   );
 }

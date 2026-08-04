@@ -12,6 +12,9 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['mssql', 'tedious', 'electron', 'electron-log', 'electron-updater'],
+            },
           },
         },
       },

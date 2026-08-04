@@ -2,113 +2,103 @@ import { useState } from 'react';
 import { Database, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { DB_TYPE_LABELS, type DbConnection } from '../../types/endpoint.types';
+import type { TenantConnection } from '../../types/endpoint.types';
 
 interface Props {
-  connections: DbConnection[];
-  activeConnectionId: string | null;
+  connections: TenantConnection[];
   onAdd: () => void;
-  onEdit: (conn: DbConnection) => void;
-  onDelete: (conn: DbConnection) => void;
-  onSetActive: (conn: DbConnection) => void;
-  onTest: (conn: DbConnection) => Promise<boolean>;
+  onEdit: (conn: TenantConnection) => void;
+  onDelete: (conn: TenantConnection) => void;
+  onSetPrimary: (conn: TenantConnection) => void;
+  onTest: (conn: TenantConnection) => Promise<boolean>;
 }
 
 export function ConnectionList({
   connections,
-  activeConnectionId,
   onAdd,
   onEdit,
   onDelete,
-  onSetActive,
+  onSetPrimary,
   onTest,
 }: Props) {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, 'success' | 'failed'>>({});
 
-  const runTest = async (conn: DbConnection) => {
+  const runTest = async (conn: TenantConnection) => {
     setTestingId(conn.id);
-    const ok = await onTest(conn);
-    setResults((r) => ({ ...r, [conn.id]: ok ? 'success' : 'failed' }));
-    setTestingId(null);
+    try {
+      const ok = await onTest(conn);
+      setResults((r) => ({ ...r, [conn.id]: ok ? 'success' : 'failed' }));
+    } finally {
+      setTestingId(null);
+    }
   };
 
   return (
-    <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Database size={16} className="text-accent" />
-          <h3 className="text-sm font-semibold text-neutral-100">Database Connectionlar</h3>
-        </div>
-        <Button variant="ghost" className="!px-2 !py-1.5 !text-xs" onClick={onAdd}>
-          <Plus size={14} className="inline -mt-0.5 mr-1" />
-          Connection goş
+        <h3 className="text-sm font-semibold text-neutral-100 flex items-center gap-2">
+          <Database size={14} className="text-emerald-400" />
+          Baglanyşyklar
+        </h3>
+        <Button variant="ghost" className="!px-2.5 !py-1.5 !text-xs" onClick={onAdd}>
+          <Plus size={14} className="mr-1 inline -mt-0.5" />
+          Goş
         </Button>
       </div>
 
       {connections.length === 0 && (
-        <p className="text-xs text-neutral-600 italic">
-          Entek connection ýok — "Connection goş" bilen ilkinji MSSQL baglanyşygyňy goş.
+        <p className="text-xs text-neutral-500 py-4 text-center border border-dashed border-surface-border rounded-lg">
+          Entäk baglanyşyk ýok. «Goş» basyp Server / User / Password giriziň.
         </p>
       )}
 
       <div className="space-y-2">
         {connections.map((c) => {
-          const testStatus = results[c.id];
-          const isActive = c.id === activeConnectionId;
+          const testStatus = results[c.id] || c.connectionStatus;
           return (
             <div
               key={c.id}
-              className={`rounded-lg border p-3 space-y-2 ${
-                isActive ? 'border-accent/50 bg-surface-raised' : 'border-surface-border/70'
-              }`}
+              className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-surface-border/60 p-3 bg-surface-raised/40"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                {isActive && <Star size={13} className="text-accent shrink-0" />}
-                <span className="text-sm font-medium text-neutral-100 truncate">{c.connectionName}</span>
-                <span className="text-[11px] px-1.5 py-0.5 rounded bg-surface-border text-neutral-400">
-                  {DB_TYPE_LABELS[c.dbType]}
-                </span>
-                {testingId === c.id ? (
-                  <Badge status="testing" label="Barlanýar…" />
-                ) : (
-                  testStatus && (
-                    <Badge status={testStatus} label={testStatus === 'success' ? 'Baglandy' : 'Şowsuz'} />
-                  )
-                )}
-                <div className="flex-1" />
-                {!isActive && (
-                  <button
-                    onClick={() => onSetActive(c)}
-                    className="text-[11px] text-neutral-500 hover:text-accent"
-                  >
-                    Esasy et
-                  </button>
-                )}
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-neutral-100">{c.label}</span>
+                  {c.isPrimary && (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">
+                      <Star size={10} /> Primary
+                    </span>
+                  )}
+                  {testStatus !== 'unknown' && testStatus !== 'testing' && (
+                    <Badge
+                      status={testStatus === 'success' ? 'success' : 'failed'}
+                      label={testStatus === 'success' ? 'OK' : 'Fail'}
+                    />
+                  )}
+                </div>
+                <p className="text-[11px] font-mono text-neutral-500 truncate">
+                  {(c.dbType || 'mssql').toUpperCase()} · {c.host}:{c.port} / {c.database} · {c.username}
+                </p>
               </div>
-              <p className="text-xs font-mono text-neutral-500 truncate">
-                {c.username}@{c.host}:{c.port}/{c.database}
-              </p>
-              <div className="flex flex-wrap gap-2 pt-0.5">
-                <Button
-                  variant="secondary"
-                  className="!px-2.5 !py-1 !text-xs"
-                  onClick={() => runTest(c)}
-                  disabled={testingId === c.id}
-                >
-                  {testingId === c.id ? 'Barlanýar…' : 'Test et'}
-                </Button>
-                <Button variant="ghost" className="!px-2.5 !py-1 !text-xs" onClick={() => onEdit(c)}>
-                  <Pencil size={12} className="inline -mt-0.5 mr-1" />
-                  Üýtget
-                </Button>
+              <div className="flex items-center gap-1 shrink-0">
                 <Button
                   variant="ghost"
-                  className="!px-2.5 !py-1 !text-xs !text-red-400"
-                  onClick={() => onDelete(c)}
+                  className="!px-2 !py-1 !text-xs"
+                  disabled={testingId === c.id}
+                  onClick={() => void runTest(c)}
                 >
-                  <Trash2 size={12} className="inline -mt-0.5 mr-1" />
-                  Poz
+                  {testingId === c.id ? '…' : 'Test'}
+                </Button>
+                {!c.isPrimary && (
+                  <Button variant="ghost" className="!px-2 !py-1 !text-xs" onClick={() => onSetPrimary(c)} title="Primary et">
+                    <Star size={13} />
+                  </Button>
+                )}
+                <Button variant="ghost" className="!px-2 !py-1 !text-xs" onClick={() => onEdit(c)}>
+                  <Pencil size={13} />
+                </Button>
+                <Button variant="ghost" className="!px-2 !py-1 !text-xs text-red-400" onClick={() => onDelete(c)}>
+                  <Trash2 size={13} />
                 </Button>
               </div>
             </div>

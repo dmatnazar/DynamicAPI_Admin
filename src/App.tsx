@@ -14,6 +14,9 @@ import { TenantsPage } from './pages/Tenants';
 import { StaffPage } from './pages/Staff';
 import { EndpointsPage } from './pages/Endpoints';
 import { SettingsPage } from './pages/Settings';
+import { hydrateStoresFromLocalDb } from './lib/hydrateStores';
+import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
+
 
 type Tab = 'dashboard' | 'tenants' | 'staff' | 'endpoints' | 'settings';
 
@@ -31,6 +34,10 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard');
   const [collapsed, setCollapsed] = useState(window.innerWidth < COLLAPSE_BREAKPOINT);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    void hydrateStoresFromLocalDb();
+  }, []);
 
   useEffect(() => {
     const onResize = () => {
@@ -51,6 +58,7 @@ export default function App() {
     <div className="flex flex-col h-screen bg-surface text-neutral-100 overflow-hidden">
       <TitleBar />
       <UpdateModal />
+      <ConfirmDialogHost />
 
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {/* Sidebar (icon-only when collapsed, full drawer on mobile toggle) */}

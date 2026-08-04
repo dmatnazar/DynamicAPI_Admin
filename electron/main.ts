@@ -4,21 +4,20 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { initAutoUpdater } from './updater';
 import { createTray, destroyTray } from './tray';
+import * as localDb from './localDb';
+import * as mssqlHelper from './mssqlHelper';
+
+// 1. AMD GPU baradaky error logy öçürmek üçin (Hardware Acceleration-y yapmak)
+app.disableHardwareAcceleration();
 
 const isDev = !app.isPackaged;
 const VAULT_PATH = path.join(app.getPath('userData'), 'vault.json');
 
-// Set this env var (e.g. `OPEN_DEVTOOLS=1 npm run dev`) if you need DevTools
-// open automatically during development. Normal dev/prod runs never open it.
 const AUTO_OPEN_DEVTOOLS = process.env.OPEN_DEVTOOLS === '1';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
 
-// ---------------------------------------------------------------------------
-// Remove the default "File / Edit / View / Window / Help" menu bar entirely.
-// Must be called before any window is created.
-// ---------------------------------------------------------------------------
 Menu.setApplicationMenu(null);
 
 function createWindow() {
@@ -29,7 +28,7 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#0A0B0F',
     titleBarStyle: 'hiddenInset',
-    autoHideMenuBar: true, // extra safety net on Windows/Linux
+    autoHideMenuBar: true,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -39,8 +38,6 @@ function createWindow() {
     },
   });
 
-  // Belt-and-suspenders: some platforms still render a 1px menu unless this
-  // is also called on the window instance itself.
   mainWindow.setMenu(null);
   mainWindow.setMenuBarVisibility(false);
 
@@ -55,9 +52,6 @@ function createWindow() {
     mainWindow?.show();
   });
 
-  // Close (X) button minimizes to tray instead of quitting, so the app can
-  // keep syncing in the background. Real quit happens via tray "Exit" or
-  // app.quit() (e.g. from an update install).
   mainWindow.on('close', (e) => {
     if (!isQuitting) {
       e.preventDefault();
@@ -105,14 +99,11 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  // Tray keeps the app alive on Windows/Linux; on macOS this is default
-  // behaviour anyway. Actual quit is only triggered via tray/menu "Exit".
   if (process.platform !== 'darwin' && isQuitting) app.quit();
 });
 
 // ---------------------------------------------------------------------------
-// Window control IPC (used by the custom in-app title bar, since the native
-// menu bar / traffic lights are hidden)
+// Window control IPC
 // ---------------------------------------------------------------------------
 
 ipcMain.handle('window:minimize', () => mainWindow?.minimize());
@@ -133,9 +124,7 @@ ipcMain.handle('window:quitApp', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Secure local vault (tenant connection strings, admin secret) using
-// Electron's OS-level safeStorage (DPAPI on Windows, Keychain on macOS,
-// libsecret on Linux) — never persisted in plaintext on disk.
+// Secure local vault
 // ---------------------------------------------------------------------------
 
 function readVault(): Record<string, string> {
@@ -176,21 +165,13 @@ ipcMain.handle('vault:delete', (_e, key: string) => {
 });
 
 // ---------------------------------------------------------------------------
-// HMAC signing for the admin sync-schema request — kept in the main
-// process so the signing secret never touches the (less trusted) renderer.
+// HMAC + staff password hashing
 // ---------------------------------------------------------------------------
 
 ipcMain.handle('crypto:signPayload', (_e, payload: unknown, secret: string) => {
   const body = JSON.stringify(payload);
   return crypto.createHmac('sha256', secret).update(body).digest('hex');
 });
-
-// ---------------------------------------------------------------------------
-// Staff password hashing (scrypt + per-password salt), done in the main
-// process so plaintext passwords never need a renderer-side crypto
-// implementation and never get logged to the (less trusted) renderer.
-// Stored format: "<saltHex>:<hashHex>"
-// ---------------------------------------------------------------------------
 
 ipcMain.handle('staff:hashPassword', (_e, plain: string) => {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -208,3 +189,63 @@ ipcMain.handle('staff:verifyPassword', (_e, plain: string, stored: string) => {
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+// ---------------------------------------------------------------------------
+// Local database IPC — all app data lives in userData/local-admin.db.json
+// Passwords are encrypted with safeStorage before write.
+// ---------------------------------------------------------------------------
+
+
+ipcMain.handle('mssql:testConnection', async (_e, input: mssqlHelper.MssqlConnectInput) => {
+  return mssqlHelper.testMssqlConnection(input);
+});
+
+ipcMain.handle('mssql:listDatabases', async (_e, input: mssqlHelper.MssqlConnectInput) => {
+  return mssqlHelper.listMssqlDatabases(input);
+});
+
+ipcMain.handle('db:exportSnapshot', () => localDb.exportSnapshot());
+
+ipcMain.handle('db:upsertCompany', (_e, company: localDb.CompanyRecord) => {
+  return localDb.upsertCompany(company);
+});
+
+ipcMain.handle('db:deleteCompany', (_e, id: string) => localDb.deleteCompany(id));
+
+ipcMain.handle('db:upsertConnection', (_e, conn: localDb.ConnectionRecord & { password?: string }) => {
+  const passwordEnc =
+    conn.password !== undefined
+      ? localDb.encryptSecret(conn.password)
+      : conn.passwordEnc || '';
+  const { password: _p, ...rest } = conn as localDb.ConnectionRecord & { password?: string };
+  return localDb.upsertConnection({ ...rest, passwordEnc });
+});
+
+ipcMain.handle('db:deleteConnection', (_e, id: string) => localDb.deleteConnection(id));
+
+ipcMain.handle('db:upsertStaff', (_e, member: localDb.StaffRecord) => localDb.upsertStaff(member));
+
+ipcMain.handle('db:deleteStaff', (_e, id: string) => localDb.deleteStaff(id));
+
+ipcMain.handle('db:upsertEndpoint', (_e, ep: localDb.EndpointRecord) => localDb.upsertEndpoint(ep));
+
+ipcMain.handle('db:deleteEndpoint', (_e, id: string) => localDb.deleteEndpoint(id));
+
+ipcMain.handle('db:getSettings', () => {
+  const s = localDb.getSettings();
+  return {
+    gatewayUrl: s.gatewayUrl,
+    adminSecret: localDb.decryptSecret(s.adminSecretEnc || ''),
+  };
+});
+
+ipcMain.handle('db:updateSettings', (_e, patch: { gatewayUrl?: string; adminSecret?: string }) => {
+  const next: Partial<localDb.SettingsRecord> = {};
+  if (patch.gatewayUrl !== undefined) next.gatewayUrl = patch.gatewayUrl;
+  if (patch.adminSecret !== undefined) next.adminSecretEnc = localDb.encryptSecret(patch.adminSecret);
+  const s = localDb.updateSettings(next);
+  return {
+    gatewayUrl: s.gatewayUrl,
+    adminSecret: localDb.decryptSecret(s.adminSecretEnc || ''),
+  };
+});
