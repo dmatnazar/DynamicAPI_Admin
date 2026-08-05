@@ -14,6 +14,7 @@ import { Button } from '../ui/Button';
 import { CodeMirrorSqlEditor } from './CodeMirrorSqlEditor';
 import { confirmDialog } from '../ui/ConfirmDialog';
 import { copyText } from '../../lib/apiUrl';
+import { formatSql } from '../../lib/sqlFormat';
 import type { EndpointConfig, ParamDef, TenantConnection } from '../../types/endpoint.types';
 
 interface Props {
@@ -101,23 +102,8 @@ export function QueryEditorPage({
   };
 
   const handleFormat = () => {
-    const keywords = [
-      'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'JOIN', 'LEFT', 'RIGHT', 'INNER',
-      'OUTER', 'ON', 'GROUP BY', 'ORDER BY', 'HAVING', 'INSERT', 'UPDATE', 'DELETE',
-      'VALUES', 'SET', 'INTO', 'AS', 'TOP', 'DISTINCT', 'UNION',
-    ];
-    let sql = draft.replace(/\s+/g, ' ').trim();
-    for (const kw of keywords) {
-      const re = new RegExp(`\\b${kw}\\b`, 'gi');
-      sql = sql.replace(re, `\n${kw}`);
-    }
-    sql = sql
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .join('\n');
-    setDraft(sql);
-    showToast('Formatlandy');
+    setDraft(formatSql(draft));
+    showToast('SQL formatlandy');
   };
 
   const handleClear = async () => {
@@ -283,11 +269,12 @@ export function QueryEditorPage({
           <Save size={13} className="inline mr-1" />
           Ýaz
         </Button>
-        <Button className="!text-xs" onClick={() => void handleExecute()} disabled={running || !draft.trim()}>
+        <Button className="!text-xs !px-3" onClick={() => void handleExecute()} disabled={running || !draft.trim()}>
           <Play size={13} className="inline mr-1" />
           {running ? 'Execute…' : 'Execute'}
         </Button>
-        <Button variant="ghost" className="!text-xs" onClick={saveAndClose}>
+        <Button className="!text-xs !px-3 !bg-sky-600 hover:!bg-sky-500" onClick={saveAndClose}>
+          <Save size={13} className="inline mr-1" />
           Ýaz we ýap
         </Button>
       </div>

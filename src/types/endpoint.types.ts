@@ -123,11 +123,17 @@ export function buildMssqlConnectionString(config: {
   if (dbType === 'mysql') {
     return `Server=${host};Port=${port};Database=${database};Uid=${user};Pwd=${password};`;
   }
+  // Brace-escape password if it contains special ADO chars (; = " ')
+  const needsBrace = /[;="']/.test(password);
+  const pwd = needsBrace ? `{${password.replace(/\}/g, '}}')}}` : password;
+
+  // For private LAN hosts, default encrypt stays as user chose;
+  // gateway will auto-fallback to encrypt=false on hang-up.
   return [
     `Server=${host},${port}`,
     `Database=${database}`,
     `User Id=${user}`,
-    `Password=${password}`,
+    `Password=${pwd}`,
     `Encrypt=${encrypt}`,
     `TrustServerCertificate=${trust}`,
   ].join(';') + ';';
