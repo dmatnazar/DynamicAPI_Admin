@@ -249,3 +249,7 @@ ipcMain.handle('db:updateSettings', (_e, patch: { gatewayUrl?: string; adminSecr
     adminSecret: localDb.decryptSecret(s.adminSecretEnc || ''),
   };
 });
+
+ipcMain.handle('mssql:executeQuery', async (_e, input: mssqlHelper.MssqlExecuteInput) => {
+  return mssqlHelper.executeMssqlQuery(input);
+});

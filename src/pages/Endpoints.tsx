@@ -10,6 +10,7 @@ import { Button } from '../components/ui/Button';
 import { confirmDialog, alertDialog } from '../components/ui/ConfirmDialog';
 import uuid from '../lib/uuid';
 import type { EndpointConfig } from '../types/endpoint.types';
+import { getConnectionForEndpoint } from '../types/endpoint.types';
 import {
   validatePathTemplate,
   findDuplicateEndpoint,
@@ -57,6 +58,7 @@ export function EndpointsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    console.log('[EndpointsPage] mount / hydrate settings');
     window.vaultAPI?.get('gatewayUrl').then((v) => v && setGatewayUrl(v));
     window.vaultAPI?.get('adminSyncSecret').then((v) => v && setAdminSecret(v));
     window.dbAPI?.getSettings().then((s) => {
@@ -67,6 +69,7 @@ export function EndpointsPage() {
 
   useEffect(() => {
     if (!activeTenantId && tenants.length > 0) {
+      console.log('[EndpointsPage] auto-select first tenant', tenants[0].id);
       setActiveTenant(tenants[0].id);
     }
   }, [tenants, activeTenantId, setActiveTenant]);
@@ -75,22 +78,32 @@ export function EndpointsPage() {
   const activeEndpoint = endpoints.find((e) => e.id === activeEndpointId) ?? null;
 
   useEffect(() => {
+    console.log('[EndpointsPage] activeEndpoint changed', {
+      activeEndpointId,
+      hasActive: !!activeEndpoint,
+      name: activeEndpoint?.name,
+      path: activeEndpoint?.pathTemplate,
+    });
     if (!activeEndpoint) setQueryEditorOpen(false);
-  }, [activeEndpoint]);
+  }, [activeEndpoint, activeEndpointId]);
 
-  // Ensure connectionId defaults to primary when missing
+  // Ensure connectionId defaults to primary when missing (guard against loops)
   useEffect(() => {
     if (!activeTenant || !activeEndpoint) return;
     if (activeEndpoint.connectionId) return;
     const primary =
       activeTenant.connections.find((c) => c.isPrimary) ?? activeTenant.connections[0];
     if (primary) {
+      console.log('[EndpointsPage] auto-set connectionId', {
+        endpointId: activeEndpoint.id,
+        connectionId: primary.id,
+      });
       updateEndpoint(activeTenant.id, activeEndpoint.id, {
         connectionId: primary.id,
         companyId: activeTenant.id,
       });
     }
-  }, [activeTenant, activeEndpoint, updateEndpoint]);
+  }, [activeTenant, activeEndpoint?.id, activeEndpoint?.connectionId, updateEndpoint]);
 
   const pathError = useMemo(
     () => (activeEndpoint ? validatePathTemplate(activeEndpoint.pathTemplate) : null),
@@ -111,7 +124,21 @@ export function EndpointsPage() {
       : null;
   }, [activeEndpoint, endpoints]);
 
+  const handleSelectEndpoint = (id: string) => {
+    console.log('[EndpointsPage] select endpoint', id);
+    try {
+      setActiveEndpoint(id);
+    } catch (err) {
+      console.error('[EndpointsPage] setActiveEndpoint failed', err);
+    }
+  };
+
   const handleAdd = () => {
+    console.log('[EndpointsPage] handleAdd clicked', {
+      activeTenantId,
+      hasTenant: !!activeTenant,
+      connections: activeTenant?.connections?.length ?? 0,
+    });
     if (!activeTenantId || !activeTenant) return;
     const primary =
       activeTenant.connections.find((c) => c.isPrimary) ?? activeTenant.connections[0];
@@ -123,7 +150,13 @@ export function EndpointsPage() {
       });
       return;
     }
-    addEndpoint(activeTenantId, blankEndpoint(activeTenantId, primary.id));
+    try {
+      const ep = blankEndpoint(activeTenantId, primary.id);
+      console.log('[EndpointsPage] adding blank endpoint', ep);
+      addEndpoint(activeTenantId, ep);
+    } catch (err) {
+      console.error('[EndpointsPage] addEndpoint failed', err);
+    }
   };
 
   const handleDuplicate = () => {
@@ -140,6 +173,7 @@ export function EndpointsPage() {
         activeTenant.connections.find((c) => c.isPrimary)?.id ||
         activeTenant.connections[0]?.id,
     };
+    console.log('[EndpointsPage] duplicate endpoint', copy.id, copy.pathTemplate);
     addEndpoint(activeTenantId, copy);
     void alertDialog({
       title: 'Duplicate döredildi',
@@ -154,7 +188,12 @@ export function EndpointsPage() {
     if (!newTenant) return;
     const primary = newTenant.connections.find((c) => c.isPrimary) ?? newTenant.connections[0];
 
-    // Move endpoint to another company's list
+    console.log('[EndpointsPage] move endpoint to company', {
+      from: activeTenantId,
+      to: newCompanyId,
+      endpointId: activeEndpoint.id,
+    });
+
     removeEndpoint(activeTenantId, activeEndpoint.id);
     const moved: EndpointConfig = {
       ...activeEndpoint,
@@ -174,6 +213,7 @@ export function EndpointsPage() {
       danger: true,
     });
     if (ok) {
+      console.log('[EndpointsPage] delete endpoint', activeEndpoint.id);
       removeEndpoint(activeTenantId, activeEndpoint.id);
       setActiveEndpoint(null);
     }
@@ -229,14 +269,22 @@ export function EndpointsPage() {
 
   if (queryEditorOpen && activeEndpoint) {
     const availableParams = [
-      ...activeEndpoint.paramsSchema.urlParams,
-      ...activeEndpoint.paramsSchema.queryParams,
-      ...activeEndpoint.paramsSchema.bodyParams,
+      ...(activeEndpoint.paramsSchema?.urlParams ?? []),
+      ...(activeEndpoint.paramsSchema?.queryParams ?? []),
+      ...(activeEndpoint.paramsSchema?.bodyParams ?? []),
     ];
+    const connection = getConnectionForEndpoint(activeTenant, activeEndpoint);
+    console.log('[EndpointsPage] open QueryEditor', {
+      endpointId: activeEndpoint.id,
+      connectionId: connection?.id,
+      host: connection?.host,
+      database: connection?.database,
+    });
     return (
       <QueryEditorPage
         endpoint={activeEndpoint}
         availableParams={availableParams}
+        connection={connection}
         onBack={() => setQueryEditorOpen(false)}
         onChange={(patch) => updateEndpoint(activeTenant.id, activeEndpoint.id, patch)}
       />
@@ -277,7 +325,7 @@ export function EndpointsPage() {
           <EndpointList
             endpoints={endpoints}
             activeId={activeEndpointId}
-            onSelect={setActiveEndpoint}
+            onSelect={handleSelectEndpoint}
             gatewayUrl={gatewayUrl}
             tenant={activeTenant}
           />
@@ -342,7 +390,10 @@ export function EndpointsPage() {
                 tenant={activeTenant}
                 gatewayUrl={gatewayUrl}
                 onCompanyChange={handleCompanyChange}
-                onChange={(patch) => updateEndpoint(activeTenant.id, activeEndpoint.id, patch)}
+                onChange={(patch) => {
+                  console.log('[EndpointsPage] endpoint patch', activeEndpoint.id, Object.keys(patch));
+                  updateEndpoint(activeTenant.id, activeEndpoint.id, patch);
+                }}
               />
             </div>
           </>

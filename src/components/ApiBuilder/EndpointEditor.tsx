@@ -4,7 +4,6 @@ import { buildApiUrl } from '../../lib/apiUrl';
 import { SqlEditor } from './SqlEditor';
 import { ParamMapper } from './ParamMapper';
 import {
-  validatePathTemplate,
   syncUrlParamsFromPath,
   extractSqlParams,
 } from '../../lib/endpointHelpers';
@@ -25,6 +24,15 @@ interface Props {
 
 const METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'DELETE'];
 
+function safeParamsSchema(endpoint: EndpointConfig) {
+  const schema = endpoint?.paramsSchema;
+  return {
+    urlParams: Array.isArray(schema?.urlParams) ? schema.urlParams : [],
+    queryParams: Array.isArray(schema?.queryParams) ? schema.queryParams : [],
+    bodyParams: Array.isArray(schema?.bodyParams) ? schema.bodyParams : [],
+  };
+}
+
 export function EndpointEditor({
   endpoint,
   onChange,
@@ -35,22 +43,35 @@ export function EndpointEditor({
   gatewayUrl,
   onCompanyChange,
 }: Props) {
+  console.log('[EndpointEditor] render', {
+    id: endpoint?.id,
+    name: endpoint?.name,
+    method: endpoint?.method,
+    path: endpoint?.pathTemplate,
+    companyId: endpoint?.companyId,
+    connectionId: endpoint?.connectionId,
+    tenantId: tenant?.id,
+    tenantSlug: tenant?.slug,
+  });
+
+  const paramsSchema = safeParamsSchema(endpoint);
+
   const allParams = [
-    ...endpoint.paramsSchema.urlParams,
-    ...endpoint.paramsSchema.queryParams,
-    ...endpoint.paramsSchema.bodyParams,
+    ...paramsSchema.urlParams,
+    ...paramsSchema.queryParams,
+    ...paramsSchema.bodyParams,
   ]
     .map((p) => p.sqlParam)
     .filter(Boolean);
 
   const sqlOnlyParams = useMemo(() => {
     const mapped = new Set(allParams.map((s) => s.replace(/^@/, '').toLowerCase()));
-    return extractSqlParams(endpoint.sqlQuery).filter((n) => !mapped.has(n.toLowerCase()));
+    return extractSqlParams(endpoint.sqlQuery || '').filter((n) => !mapped.has(n.toLowerCase()));
   }, [endpoint.sqlQuery, allParams]);
 
   const handlePathChange = (path: string) => {
-    const paramsSchema = syncUrlParamsFromPath(endpoint.paramsSchema, path);
-    onChange({ pathTemplate: path, paramsSchema });
+    const nextSchema = syncUrlParamsFromPath(paramsSchema, path);
+    onChange({ pathTemplate: path, paramsSchema: nextSchema });
   };
 
   const addSqlParamsToQuery = () => {
@@ -63,8 +84,8 @@ export function EndpointEditor({
     }));
     onChange({
       paramsSchema: {
-        ...endpoint.paramsSchema,
-        queryParams: [...endpoint.paramsSchema.queryParams, ...newQuery],
+        ...paramsSchema,
+        queryParams: [...paramsSchema.queryParams, ...newQuery],
       },
     });
   };
@@ -96,6 +117,7 @@ export function EndpointEditor({
             value={tenant?.id || endpoint.companyId || ''}
             onChange={(e) => {
               const id = e.target.value;
+              console.log('[EndpointEditor] company change →', id);
               onChange({ companyId: id, connectionId: undefined });
               onCompanyChange?.(id);
             }}
@@ -116,7 +138,10 @@ export function EndpointEditor({
             className={inputCls}
             value={selectedConnId}
             disabled={!tenant || connections.length === 0}
-            onChange={(e) => onChange({ connectionId: e.target.value })}
+            onChange={(e) => {
+              console.log('[EndpointEditor] connection change →', e.target.value);
+              onChange({ connectionId: e.target.value });
+            }}
           >
             {connections.length === 0 ? (
               <option value="">Ilki Companies-de DB goşuň</option>
@@ -135,8 +160,13 @@ export function EndpointEditor({
           <p className="text-[11px] font-mono text-emerald-400/90 break-all bg-surface-card border border-surface-border rounded-md px-2.5 py-2">
             {fullUrl}
           </p>
+          {/* IMPORTANT: curly braces must be escaped in JSX text, otherwise React treats them as JS variables and crashes */}
           <p className="text-[10px] text-neutral-600">
-            Format: <span className="font-mono text-neutral-500">/api/v1/{companySlug}/{dbKey}{path}</span></p>
+            Format:{' '}
+            <span className="font-mono text-neutral-500">
+              {'/api/v1/{companySlug}/{dbKey}{path}'}
+            </span>
+          </p>
         </div>
       </div>
 
@@ -160,7 +190,7 @@ export function EndpointEditor({
             <input
               className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm font-mono text-neutral-100 outline-none"
               placeholder="/test ýa-da /users/:id"
-              value={endpoint.pathTemplate}
+              value={endpoint.pathTemplate || ''}
               onChange={(e) =>
                 handlePathChange(e.target.value.startsWith('/') ? e.target.value : `/${e.target.value}`)
               }
@@ -177,7 +207,7 @@ export function EndpointEditor({
         <input
           className={inputCls}
           placeholder="getBranchSales"
-          value={endpoint.name}
+          value={endpoint.name || ''}
           onChange={(e) => onChange({ name: e.target.value })}
         />
       </div>
@@ -186,20 +216,20 @@ export function EndpointEditor({
         <ParamMapper
           title="URL Params"
           hint="Path-dan :param"
-          params={endpoint.paramsSchema.urlParams}
-          onChange={(p) => onChange({ paramsSchema: { ...endpoint.paramsSchema, urlParams: p } })}
+          params={paramsSchema.urlParams}
+          onChange={(p) => onChange({ paramsSchema: { ...paramsSchema, urlParams: p } })}
         />
         <ParamMapper
           title="Query Params"
           hint="?key=value"
-          params={endpoint.paramsSchema.queryParams}
-          onChange={(p) => onChange({ paramsSchema: { ...endpoint.paramsSchema, queryParams: p } })}
+          params={paramsSchema.queryParams}
+          onChange={(p) => onChange({ paramsSchema: { ...paramsSchema, queryParams: p } })}
         />
         <ParamMapper
           title="Body Params"
           hint="JSON body"
-          params={endpoint.paramsSchema.bodyParams}
-          onChange={(p) => onChange({ paramsSchema: { ...endpoint.paramsSchema, bodyParams: p } })}
+          params={paramsSchema.bodyParams}
+          onChange={(p) => onChange({ paramsSchema: { ...paramsSchema, bodyParams: p } })}
         />
       </div>
 
@@ -221,7 +251,7 @@ export function EndpointEditor({
       <div className="space-y-1.5">
         <label className={labelCls}>SQL Query</label>
         <SqlEditor
-          value={endpoint.sqlQuery}
+          value={endpoint.sqlQuery || ''}
           onChange={(v) => onChange({ sqlQuery: v })}
           availableParams={allParams}
         />
@@ -231,7 +261,7 @@ export function EndpointEditor({
         <label className="flex items-center gap-2 text-sm text-neutral-300 cursor-pointer">
           <input
             type="checkbox"
-            checked={endpoint.authRequired}
+            checked={!!endpoint.authRequired}
             onChange={(e) => onChange({ authRequired: e.target.checked })}
             className="rounded border-surface-border"
           />
@@ -243,7 +273,7 @@ export function EndpointEditor({
             type="number"
             min={0}
             className="w-20 bg-surface-card border border-surface-border rounded-md px-2 py-1 text-sm"
-            value={endpoint.cacheTtlSec}
+            value={endpoint.cacheTtlSec ?? 0}
             onChange={(e) => onChange({ cacheTtlSec: Number(e.target.value) })}
           />
         </label>

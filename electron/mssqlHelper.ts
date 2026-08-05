@@ -10,6 +10,12 @@ export interface MssqlConnectInput {
   trustServerCertificate?: boolean;
 }
 
+export interface MssqlExecuteInput extends MssqlConnectInput {
+  sqlQuery: string;
+  /** Map of SQL param name (without @) → value */
+  params?: Record<string, unknown>;
+}
+
 function toConfig(input: MssqlConnectInput, database?: string): sql.config {
   return {
     server: input.host,
@@ -24,7 +30,7 @@ function toConfig(input: MssqlConnectInput, database?: string): sql.config {
       connectTimeout: 15000,
     },
     connectionTimeout: 15000,
-    requestTimeout: 15000,
+    requestTimeout: 30000,
   };
 }
 
@@ -64,7 +70,6 @@ export async function listMssqlDatabases(
     if (!input.host?.trim()) return { ok: false, message: 'Server (host) boş' };
     if (!input.username?.trim()) return { ok: false, message: 'Ulanyjy ady boş' };
 
-    // Always hit master first so we can list DBs even if target DB wrong
     pool = await new sql.ConnectionPool(toConfig(input, 'master')).connect();
 
     const r = await pool.request().query(`
@@ -79,6 +84,56 @@ export async function listMssqlDatabases(
   } catch (err) {
     const message = (err as Error).message || String(err);
     return { ok: false, message };
+  } finally {
+    try {
+      await pool?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Execute a parameterized SQL query against the given connection.
+ * Params keys should be WITHOUT leading @ (mssql adds binding itself).
+ */
+export async function executeMssqlQuery(
+  input: MssqlExecuteInput
+): Promise<
+  | { ok: true; rows: Record<string, unknown>[]; rowCount: number; elapsedMs: number }
+  | { ok: false; message: string }
+> {
+  let pool: sql.ConnectionPool | null = null;
+  const t0 = Date.now();
+  try {
+    if (!input.host?.trim()) return { ok: false, message: 'Server (host) boş' };
+    if (!input.username?.trim()) return { ok: false, message: 'Ulanyjy ady boş' };
+    if (!input.sqlQuery?.trim()) return { ok: false, message: 'SQL sorag boş' };
+
+    pool = await new sql.ConnectionPool(toConfig(input, input.database)).connect();
+    const request = pool.request();
+
+    if (input.params) {
+      for (const [key, value] of Object.entries(input.params)) {
+        const name = key.startsWith('@') ? key.slice(1) : key;
+        // Let mssql infer type from JS value
+        request.input(name, value as any);
+      }
+    }
+
+    const result = await request.query(input.sqlQuery);
+    const rows = (result.recordset || []) as Record<string, unknown>[];
+    return {
+      ok: true,
+      rows,
+      rowCount: rows.length,
+      elapsedMs: Date.now() - t0,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: (err as Error).message || String(err),
+    };
   } finally {
     try {
       await pool?.close();

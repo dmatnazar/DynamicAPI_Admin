@@ -52,6 +52,20 @@ declare global {
         encrypt?: boolean;
         trustServerCertificate?: boolean;
       }) => Promise<{ ok: true; databases: string[] } | { ok: false; message: string }>;
+      executeQuery: (input: {
+        host: string;
+        port?: number;
+        database?: string;
+        username: string;
+        password: string;
+        encrypt?: boolean;
+        trustServerCertificate?: boolean;
+        sqlQuery: string;
+        params?: Record<string, unknown>;
+      }) => Promise<
+        | { ok: true; rows: Record<string, unknown>[]; rowCount: number; elapsedMs: number }
+        | { ok: false; message: string }
+      >;
     };
     dbAPI: {
       exportSnapshot: () => Promise<{

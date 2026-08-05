@@ -14,18 +14,26 @@ import { Button } from '../ui/Button';
 import { CodeMirrorSqlEditor } from './CodeMirrorSqlEditor';
 import { confirmDialog } from '../ui/ConfirmDialog';
 import { copyText } from '../../lib/apiUrl';
-import type { EndpointConfig, ParamDef } from '../../types/endpoint.types';
+import type { EndpointConfig, ParamDef, TenantConnection } from '../../types/endpoint.types';
 
 interface Props {
   endpoint: EndpointConfig;
   availableParams: ParamDef[];
+  /** Active DB connection for this endpoint (required for real Execute) */
+  connection: TenantConnection | null;
   onChange: (patch: Partial<EndpointConfig>) => void;
   onBack: () => void;
 }
 
 type ResultRow = Record<string, unknown>;
 
-export function QueryEditorPage({ endpoint, availableParams, onChange, onBack }: Props) {
+export function QueryEditorPage({
+  endpoint,
+  availableParams,
+  connection,
+  onChange,
+  onBack,
+}: Props) {
   const [draft, setDraft] = useState(endpoint.sqlQuery);
   const [fullscreen, setFullscreen] = useState(false);
   const [paramValues, setParamValues] = useState<Record<string, string>>(() => {
@@ -93,7 +101,6 @@ export function QueryEditorPage({ endpoint, availableParams, onChange, onBack }:
   };
 
   const handleFormat = () => {
-    // Lightweight format: normalize whitespace around keywords
     const keywords = [
       'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'JOIN', 'LEFT', 'RIGHT', 'INNER',
       'OUTER', 'ON', 'GROUP BY', 'ORDER BY', 'HAVING', 'INSERT', 'UPDATE', 'DELETE',
@@ -132,50 +139,88 @@ export function QueryEditorPage({ endpoint, availableParams, onChange, onBack }:
     setError(null);
     setRows(null);
     const t0 = performance.now();
-    try {
-      // Stub execution until real MSSQL IPC is wired in main process.
-      // Still validates params and shows structured result UI.
-      await new Promise((r) => setTimeout(r, 450));
 
-      const missing = paramKeys.filter((k) => {
-        const v = paramValues[k];
-        return v === undefined || v === '';
-      });
-      // Don't hard-fail on missing — demo sample data
-      const sample: ResultRow[] = [
-        {
-          id: 1,
-          note: 'Demo netije — hakyky MSSQL baglanyşyk main process-da wajip',
-          method: endpoint.method,
-          path: endpoint.pathTemplate,
-          paramsUsed: Object.keys(paramValues).filter((k) => paramValues[k]).length,
-          missingParams: missing.join(', ') || '—',
-        },
-        {
-          id: 2,
-          sampleCol: 'A',
-          value: 100,
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: 3,
-          sampleCol: 'B',
-          value: 250,
-          createdAt: new Date().toISOString(),
-        },
-      ];
-      setRows(sample);
-      setElapsedMs(Math.round(performance.now() - t0));
-      if (missing.length) {
-        setError(`Üns: boş parametrler — ${missing.join(', ')}`);
+    console.log('[QueryEditor] Execute start', {
+      hasConnection: !!connection,
+      host: connection?.host,
+      database: connection?.database,
+      sqlLength: draft.length,
+      paramKeys,
+    });
+
+    try {
+      if (!connection?.host || !connection?.username) {
+        setError(
+          'Database baglanyşyk ýok. Companies → kompaniýa → Connections-de host/username dolduryň.'
+        );
+        setElapsedMs(Math.round(performance.now() - t0));
+        return;
       }
+
+      if (!window.mssqlAPI?.executeQuery) {
+        setError(
+          'mssqlAPI.executeQuery elýeterli däl. Electron main/preload täzelenmedik bolup biler — npm run dev täzeden işlediň.'
+        );
+        setElapsedMs(Math.round(performance.now() - t0));
+        return;
+      }
+
+      // Build params for mssql (keys without @)
+      const params: Record<string, unknown> = {};
+      for (const p of availableParams) {
+        const key = p.sqlParam || `@${p.name}`;
+        const raw = paramValues[key];
+        if (raw === undefined || raw === '') {
+          if (p.required) {
+            setError(`Required parametr boş: ${key}`);
+            setElapsedMs(Math.round(performance.now() - t0));
+            return;
+          }
+          continue;
+        }
+        const name = key.startsWith('@') ? key.slice(1) : key;
+        // Coerce simple types
+        if (p.type === 'int' || p.type === 'bigint') {
+          params[name] = Number(raw);
+        } else if (p.type === 'float') {
+          params[name] = parseFloat(raw);
+        } else if (p.type === 'bit') {
+          params[name] = raw === '1' || raw.toLowerCase() === 'true';
+        } else {
+          params[name] = raw;
+        }
+      }
+
+      const result = await window.mssqlAPI.executeQuery({
+        host: connection.host,
+        port: connection.port,
+        database: connection.database,
+        username: connection.username,
+        password: connection.password,
+        encrypt: connection.encrypt,
+        trustServerCertificate: connection.trustServerCertificate,
+        sqlQuery: draft,
+        params,
+      });
+
+      console.log('[QueryEditor] Execute result', result);
+
+      if (!result.ok) {
+        setError(result.message);
+        setElapsedMs(Math.round(performance.now() - t0));
+        return;
+      }
+
+      setRows(result.rows);
+      setElapsedMs(result.elapsedMs ?? Math.round(performance.now() - t0));
     } catch (e) {
+      console.error('[QueryEditor] Execute error', e);
       setError((e as Error).message);
       setElapsedMs(Math.round(performance.now() - t0));
     } finally {
       setRunning(false);
     }
-  }, [endpoint.method, endpoint.pathTemplate, paramKeys, paramValues]);
+  }, [availableParams, connection, draft, paramKeys, paramValues]);
 
   const columns = useMemo(() => {
     if (!rows?.length) return [];
@@ -203,6 +248,11 @@ export function QueryEditorPage({ endpoint, availableParams, onChange, onBack }:
           </h2>
           <p className="text-[11px] text-neutral-500 font-mono truncate">
             {endpoint.method} {endpoint.pathTemplate}
+            {connection && (
+              <span className="ml-2 text-neutral-600">
+                · {connection.label} ({connection.host}/{connection.database})
+              </span>
+            )}
           </p>
         </div>
         <div className="flex-1" />
@@ -241,6 +291,13 @@ export function QueryEditorPage({ endpoint, availableParams, onChange, onBack }:
           Ýaz we ýap
         </Button>
       </div>
+
+      {!connection && (
+        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          Bu endpoint üçin database baglanyşyk saýlanmady. Companies-de connection goşuň ýa-da
+          Endpoint Editor-da Database saýlaň.
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-4 gap-3">
         {/* Params panel */}
@@ -295,11 +352,13 @@ export function QueryEditorPage({ endpoint, availableParams, onChange, onBack }:
               )}
             </div>
             {error && (
-              <p className="text-xs text-amber-400 px-3 py-2 border-b border-surface-border">{error}</p>
+              <p className="text-xs text-red-400 px-3 py-2 border-b border-surface-border whitespace-pre-wrap">
+                {error}
+              </p>
             )}
             {!rows && !error && (
               <p className="text-xs text-neutral-600 px-3 py-4 text-center">
-                Execute basyp SQL-i synag ediň — netije aşakda table görnüşinde çykýar
+                Execute basyp SQL-i hakyky MSSQL-de synag ediň — netije aşakda table görnüşinde çykýar
               </p>
             )}
             {rows && rows.length > 0 && (
