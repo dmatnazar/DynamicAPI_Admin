@@ -54,9 +54,13 @@ export interface StaffRecord {
   fullName: string;
   username: string;
   passwordHash: string;
+  /** Encrypted plain password for admin UI reveal */
+  passwordEnc?: string;
   role: 'admin' | 'editor' | 'viewer';
   tenantIds: string[];
   active: boolean;
+  phone?: string;
+  email?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -83,6 +87,28 @@ export interface SettingsRecord {
   [key: string]: unknown;
 }
 
+/** Persistent offline queue — survives app restart */
+export interface SyncQueueItem {
+  id: string;
+  type: 'full-sync' | 'staff' | 'endpoints' | 'tenant';
+  tenantSlug?: string;
+  /** JSON-serializable payload if needed */
+  payload?: unknown;
+  attempts: number;
+  lastError?: string;
+  status: 'pending' | 'processing' | 'failed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SyncMeta {
+  lastSuccessAt?: string;
+  lastAttemptAt?: string;
+  lastError?: string;
+  lastResult?: string;
+  autoSyncIntervalSec: number;
+}
+
 interface DbShape {
   version: number;
   companies: CompanyRecord[];
@@ -90,9 +116,11 @@ interface DbShape {
   staff: StaffRecord[];
   endpoints: EndpointRecord[];
   settings: SettingsRecord;
+  syncQueue: SyncQueueItem[];
+  syncMeta: SyncMeta;
 }
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function dbPath() {
   return path.join(app.getPath('userData'), 'local-admin.db.json');
@@ -106,6 +134,8 @@ function emptyDb(): DbShape {
     staff: [],
     endpoints: [],
     settings: { gatewayUrl: '', adminSecretEnc: '' },
+    syncQueue: [],
+    syncMeta: { autoSyncIntervalSec: 30 },
   };
 }
 
@@ -114,6 +144,9 @@ function readRaw(): DbShape {
   if (!fs.existsSync(p)) return emptyDb();
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf8')) as DbShape;
+    if (!Array.isArray((data as any).syncQueue)) (data as any).syncQueue = [];
+    if (!(data as any).syncMeta) (data as any).syncMeta = { autoSyncIntervalSec: 30 };
+    (data as any).version = DB_VERSION;
     if (!data.version) return emptyDb();
     return {
       ...emptyDb(),
@@ -358,4 +391,84 @@ export function exportSnapshot() {
       adminSecret: decryptSecret(db.settings.adminSecretEnc || ''),
     },
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Sync queue (persistent)
+// ---------------------------------------------------------------------------
+
+export function listSyncQueue(): SyncQueueItem[] {
+  return readRaw().syncQueue || [];
+}
+
+export function enqueueSync(
+  item: Omit<SyncQueueItem, 'id' | 'attempts' | 'status' | 'createdAt' | 'updatedAt'> & {
+    id?: string;
+  }
+): SyncQueueItem {
+  const db = readRaw();
+  const now = new Date().toISOString();
+  // Dedupe: same type+tenantSlug pending → refresh updatedAt only
+  const existing = (db.syncQueue || []).find(
+    (q) =>
+      q.status === 'pending' &&
+      q.type === item.type &&
+      (q.tenantSlug || '') === (item.tenantSlug || '')
+  );
+  if (existing) {
+    existing.updatedAt = now;
+    existing.payload = item.payload ?? existing.payload;
+    writeRaw(db);
+    return existing;
+  }
+  const row: SyncQueueItem = {
+    id: item.id || `sq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type: item.type,
+    tenantSlug: item.tenantSlug,
+    payload: item.payload,
+    attempts: 0,
+    lastError: undefined,
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+  db.syncQueue = [...(db.syncQueue || []), row];
+  writeRaw(db);
+  return row;
+}
+
+export function updateSyncQueueItem(
+  id: string,
+  patch: Partial<SyncQueueItem>
+): SyncQueueItem | null {
+  const db = readRaw();
+  const idx = (db.syncQueue || []).findIndex((q) => q.id === id);
+  if (idx < 0) return null;
+  db.syncQueue[idx] = {
+    ...db.syncQueue[idx],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  writeRaw(db);
+  return db.syncQueue[idx];
+}
+
+export function removeSyncQueueItem(id: string): boolean {
+  const db = readRaw();
+  const before = (db.syncQueue || []).length;
+  db.syncQueue = (db.syncQueue || []).filter((q) => q.id !== id);
+  writeRaw(db);
+  return db.syncQueue.length < before;
+}
+
+export function getSyncMeta(): SyncMeta {
+  return readRaw().syncMeta || { autoSyncIntervalSec: 30 };
+}
+
+export function updateSyncMeta(patch: Partial<SyncMeta>): SyncMeta {
+  const db = readRaw();
+  db.syncMeta = { ...(db.syncMeta || { autoSyncIntervalSec: 30 }), ...patch };
+  writeRaw(db);
+  return db.syncMeta;
 }

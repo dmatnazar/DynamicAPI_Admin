@@ -188,6 +188,27 @@ ipcMain.handle('staff:verifyPassword', (_e, plain: string, stored: string) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 });
 
+/** Reversible encrypt for admin UI "show password" (OS safeStorage) */
+ipcMain.handle('staff:encryptSecret', (_e, plain: string) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    // fallback: base64 only (dev) — not secure but better than nothing
+    return Buffer.from(plain, 'utf8').toString('base64');
+  }
+  return safeStorage.encryptString(plain).toString('base64');
+});
+
+ipcMain.handle('staff:decryptSecret', (_e, enc: string) => {
+  if (!enc) return '';
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      return Buffer.from(enc, 'base64').toString('utf8');
+    }
+    return safeStorage.decryptString(Buffer.from(enc, 'base64'));
+  } catch {
+    return '';
+  }
+});
+
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
 // ---------------------------------------------------------------------------
@@ -249,6 +270,19 @@ ipcMain.handle('db:updateSettings', (_e, patch: { gatewayUrl?: string; adminSecr
     adminSecret: localDb.decryptSecret(s.adminSecretEnc || ''),
   };
 });
+
+ipcMain.handle('db:listSyncQueue', () => localDb.listSyncQueue());
+ipcMain.handle('db:enqueueSync', (_e, item: Parameters<typeof localDb.enqueueSync>[0]) =>
+  localDb.enqueueSync(item)
+);
+ipcMain.handle('db:updateSyncQueueItem', (_e, id: string, patch: Partial<localDb.SyncQueueItem>) =>
+  localDb.updateSyncQueueItem(id, patch)
+);
+ipcMain.handle('db:removeSyncQueueItem', (_e, id: string) => localDb.removeSyncQueueItem(id));
+ipcMain.handle('db:getSyncMeta', () => localDb.getSyncMeta());
+ipcMain.handle('db:updateSyncMeta', (_e, patch: Partial<localDb.SyncMeta>) =>
+  localDb.updateSyncMeta(patch)
+);
 
 ipcMain.handle('mssql:executeQuery', async (_e, input: mssqlHelper.MssqlExecuteInput) => {
   return mssqlHelper.executeMssqlQuery(input);

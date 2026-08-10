@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { StaffMember } from '../types/staff.types';
+import { enqueueChange } from '../lib/syncEngine';
+import { toastInfo, toastWarning } from '../components/ui/Toast';
 
 interface StaffStore {
   staff: StaffMember[];
@@ -26,6 +28,11 @@ export const useStaffStore = create<StaffStore>((set, get) => ({
   addStaff: (member) => {
     set((s) => ({ staff: [...s.staff, member], activeStaffId: member.id }));
     void persist(member);
+    toastInfo(
+      'Işgär saklandy',
+      `@${member.username} local DB-de. VPS sync soň BI Platform-a girip biler.`
+    );
+    void enqueueChange('staff');
   },
 
   updateStaff: (id, patch) => {
@@ -34,6 +41,7 @@ export const useStaffStore = create<StaffStore>((set, get) => ({
     }));
     const m = get().staff.find((x) => x.id === id);
     if (m) void persist(m);
+    void enqueueChange('staff');
   },
 
   removeStaff: (id) => {
@@ -41,18 +49,20 @@ export const useStaffStore = create<StaffStore>((set, get) => ({
       staff: s.staff.filter((m) => m.id !== id),
       activeStaffId: s.activeStaffId === id ? null : s.activeStaffId,
     }));
-    void window.dbAPI?.deleteStaff(id);
+    void window.dbAPI?.deleteStaff?.(id);
+    void enqueueChange('staff');
   },
 
   setActiveStaff: (id) => set({ activeStaffId: id }),
 
-  revokeTenantFromAllStaff: (tenantId) =>
-    set((s) => {
-      const next = s.staff.map((m) => ({
+  revokeTenantFromAllStaff: (tenantId) => {
+    set((s) => ({
+      staff: s.staff.map((m) => ({
         ...m,
         tenantIds: m.tenantIds.filter((t) => t !== tenantId),
-      }));
-      for (const m of next) void persist(m);
-      return { staff: next };
-    }),
+      })),
+    }));
+    for (const m of get().staff) void persist(m);
+    void enqueueChange('staff');
+  },
 }));

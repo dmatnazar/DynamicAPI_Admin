@@ -12,6 +12,8 @@ declare global {
     };
     staffAPI: {
       hashPassword: (plain: string) => Promise<string>;
+      encryptSecret: (plain: string) => Promise<string>;
+      decryptSecret: (enc: string) => Promise<string>;
       verifyPassword: (plain: string, stored: string) => Promise<boolean>;
     };
     updaterAPI: {
@@ -88,6 +90,34 @@ declare global {
         gatewayUrl?: string;
         adminSecret?: string;
       }) => Promise<{ gatewayUrl: string; adminSecret: string }>;
+      listSyncQueue: () => Promise<
+        Array<{
+          id: string;
+          type: string;
+          tenantSlug?: string;
+          attempts: number;
+          lastError?: string;
+          status: string;
+          createdAt: string;
+          updatedAt: string;
+        }>
+      >;
+      enqueueSync: (item: {
+        type: string;
+        tenantSlug?: string;
+        payload?: unknown;
+        id?: string;
+      }) => Promise<unknown>;
+      updateSyncQueueItem: (id: string, patch: unknown) => Promise<unknown>;
+      removeSyncQueueItem: (id: string) => Promise<boolean>;
+      getSyncMeta: () => Promise<{
+        lastSuccessAt?: string;
+        lastAttemptAt?: string;
+        lastError?: string;
+        lastResult?: string;
+        autoSyncIntervalSec: number;
+      }>;
+      updateSyncMeta: (patch: unknown) => Promise<unknown>;
     };
   }
 }

@@ -340,10 +340,7 @@ export function EndpointsPage() {
             <Upload size={12} className="inline mr-1" />
             Import
           </Button>
-          <Button variant="ghost" className="!text-[11px] !px-2 !py-1" onClick={() => setSyncModalOpen(true)}>
-            <CloudUpload size={12} className="inline mr-1" />
-            Sync VPS
-          </Button>
+          {/* Sync VPS → TitleBar */}
           <input
             ref={fileRef}
             type="file"

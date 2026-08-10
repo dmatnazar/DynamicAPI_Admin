@@ -15,7 +15,9 @@ import { StaffPage } from './pages/Staff';
 import { EndpointsPage } from './pages/Endpoints';
 import { SettingsPage } from './pages/Settings';
 import { hydrateStoresFromLocalDb } from './lib/hydrateStores';
+import { startAutoSync } from './lib/syncEngine';
 import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
+import { ToastHost } from './components/ui/Toast';
 
 
 type Tab = 'dashboard' | 'tenants' | 'staff' | 'endpoints' | 'settings';
@@ -36,7 +38,11 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
-    void hydrateStoresFromLocalDb();
+    void (async () => {
+      await hydrateStoresFromLocalDb();
+      // Restart / first open → full sync + queue flush
+      startAutoSync();
+    })();
   }, []);
 
   useEffect(() => {
@@ -59,6 +65,7 @@ export default function App() {
       <TitleBar />
       <UpdateModal />
       <ConfirmDialogHost />
+      <ToastHost />
 
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {/* Sidebar (icon-only when collapsed, full drawer on mobile toggle) */}

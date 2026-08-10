@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { enqueueChange } from '../lib/syncEngine';
 import type { TenantConfig, TenantConnection, CompanyFormInput } from '../types/endpoint.types';
 import { buildMssqlConnectionString } from '../types/endpoint.types';
 import uuid from '../lib/uuid';
@@ -93,6 +94,7 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     set((s) => ({ tenants: [...s.tenants, tenant], activeTenantId: tenant.id }));
     void persistCompany(tenant);
     for (const c of tenant.connections) void persistConnection(tenant.id, c);
+    void enqueueChange('tenant', tenant.slug);
   },
 
   updateTenant: (id, patch) => {
@@ -100,15 +102,20 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
       tenants: s.tenants.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     }));
     const t = get().tenants.find((x) => x.id === id);
-    if (t) void persistCompany({ ...t, ...patch });
+    if (t) {
+      void persistCompany({ ...t, ...patch });
+      void enqueueChange('tenant', t.slug);
+    }
   },
 
   removeTenant: (id) => {
+    const t = get().tenants.find((x) => x.id === id);
     set((s) => ({
-      tenants: s.tenants.filter((t) => t.id !== id),
+      tenants: s.tenants.filter((x) => x.id !== id),
       activeTenantId: s.activeTenantId === id ? null : s.activeTenantId,
     }));
     void window.dbAPI?.deleteCompany(id);
+    void enqueueChange('full-sync');
   },
 
   setActiveTenant: (id) => set({ activeTenantId: id }),
@@ -132,6 +139,8 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
           ? true
           : !!connection.isPrimary,
     });
+    const slug = get().tenants.find((x) => x.id === tenantId)?.slug;
+    void enqueueChange('tenant', slug);
   },
 
   updateConnection: (tenantId, connectionId, patch) => {
@@ -147,6 +156,7 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     const t = get().tenants.find((x) => x.id === tenantId);
     const c = t?.connections.find((x) => x.id === connectionId);
     if (c) void persistConnection(tenantId, c);
+    void enqueueChange('tenant', t?.slug);
   },
 
   removeConnection: (tenantId, connectionId) => {
@@ -162,6 +172,8 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
       }),
     }));
     void window.dbAPI?.deleteConnection(connectionId);
+    const slug = get().tenants.find((x) => x.id === tenantId)?.slug;
+    void enqueueChange('tenant', slug);
   },
 
   setPrimaryConnection: (tenantId, connectionId) => {
@@ -178,6 +190,7 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     const t = get().tenants.find((x) => x.id === tenantId);
     if (t) {
       for (const c of t.connections) void persistConnection(tenantId, c);
+      void enqueueChange('tenant', t.slug);
     }
   },
 

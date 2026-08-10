@@ -83,7 +83,7 @@ export function TenantForm({
     } else if (!isEdit) {
       setForm({ ...empty });
     }
-  }, [isEdit, initial]);
+  }, [isEdit, initial?.id, initial?.slug, initial?.name]);
 
   const set = <K extends keyof CompanyFormInput>(key: K, value: CompanyFormInput[K]) => {
     setForm((f) => {

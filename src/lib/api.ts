@@ -98,3 +98,145 @@ export async function checkGatewayHealth(gatewayUrl: string): Promise<boolean> {
     return false;
   }
 }
+
+
+/** Sync staff members for a tenant to VPS hub (BI Platform consumes these) */
+export async function syncStaffToVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  tenantSlug: string,
+  staff: Array<{
+    id: string;
+    fullName: string;
+    username: string;
+    passwordHash: string;
+    role: string;
+    tenantSlugs?: string[];
+    phone?: string;
+    email?: string;
+    active: boolean;
+    passwordPlain?: string;
+    passwordEnc?: string;
+  }>
+): Promise<{ status: string; staffLoaded: number }> {
+  const payload = { tenantSlug, staff };
+  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/sync-staff`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Signature': signature,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error ? JSON.stringify(body.error) : `Staff sync failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Poll pending registrations for a tenant from VPS hub */
+export async function fetchPendingRegistrations(
+  gatewayUrl: string,
+  adminSecret: string,
+  tenantSlug: string
+): Promise<any[]> {
+  // GET signs empty object "{}"
+  const signature = await window.cryptoAPI.signPayload({}, adminSecret);
+  const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/registrations?tenantSlug=${encodeURIComponent(tenantSlug)}&status=pending&markDelivered=1`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Signature': signature,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Fetch registrations failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.registrations || [];
+}
+
+/** Approve or reject a BI registration — creates staff on VPS */
+export async function resolveRegistrationOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  payload: {
+    id: string;
+    action: 'approve' | 'reject';
+    role?: string;
+    note?: string;
+    reviewedBy?: string;
+  }
+): Promise<any> {
+  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/registrations/resolve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Signature': signature,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error ? JSON.stringify(body.error) : `Resolve failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+
+export async function updateRegistrationOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  payload: {
+    id: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    email?: string;
+    username?: string;
+    requestedRole?: string;
+    note?: string;
+  }
+): Promise<any> {
+  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/registrations/update`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Signature': signature,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error ? JSON.stringify(body.error) : `Update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+
+/** Pull full catalog from VPS (staff, tenants, endpoints) */
+export async function fetchCatalogFromVps(
+  gatewayUrl: string,
+  adminSecret: string
+): Promise<{
+  tenants: any[];
+  endpoints: any[];
+  staff: any[];
+  syncedAt?: string;
+}> {
+  const signature = await window.cryptoAPI.signPayload({}, adminSecret);
+  const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/catalog`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Signature': signature,
+    },
+  });
+  if (!res.ok) throw new Error(`Catalog fetch failed: ${res.status}`);
+  return res.json();
+}

@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('staffAPI', {
   hashPassword: (plain: string) => ipcRenderer.invoke('staff:hashPassword', plain),
   verifyPassword: (plain: string, stored: string) =>
     ipcRenderer.invoke('staff:verifyPassword', plain, stored),
+  encryptSecret: (plain: string) => ipcRenderer.invoke('staff:encryptSecret', plain),
+  decryptSecret: (enc: string) => ipcRenderer.invoke('staff:decryptSecret', enc),
 });
 
 contextBridge.exposeInMainWorld('updaterAPI', {
@@ -89,4 +91,11 @@ contextBridge.exposeInMainWorld('dbAPI', {
   getSettings: () => ipcRenderer.invoke('db:getSettings'),
   updateSettings: (patch: { gatewayUrl?: string; adminSecret?: string }) =>
     ipcRenderer.invoke('db:updateSettings', patch),
+  listSyncQueue: () => ipcRenderer.invoke('db:listSyncQueue'),
+  enqueueSync: (item: unknown) => ipcRenderer.invoke('db:enqueueSync', item),
+  updateSyncQueueItem: (id: string, patch: unknown) =>
+    ipcRenderer.invoke('db:updateSyncQueueItem', id, patch),
+  removeSyncQueueItem: (id: string) => ipcRenderer.invoke('db:removeSyncQueueItem', id),
+  getSyncMeta: () => ipcRenderer.invoke('db:getSyncMeta'),
+  updateSyncMeta: (patch: unknown) => ipcRenderer.invoke('db:updateSyncMeta', patch),
 });

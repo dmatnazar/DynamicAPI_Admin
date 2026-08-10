@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Eye, EyeOff, RefreshCw, Database } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -33,6 +33,25 @@ export function ConnectionFormModal({ open, onClose, initial, onSave }: Props) {
   const [databases, setDatabases] = useState<string[]>([]);
   const [loadingDbs, setLoadingDbs] = useState(false);
   const [dbListError, setDbListError] = useState('');
+
+  // Re-fill form every time modal opens / initial changes (edit mode)
+  useEffect(() => {
+    if (!open) return;
+    setLabel(initial?.label || 'Primary');
+    setDbType(initial?.dbType || 'mssql');
+    setHost(initial?.host || '');
+    setPort(initial?.port || 1433);
+    setDatabase(initial?.database || '');
+    setUsername(initial?.username || '');
+    setPassword(initial?.password || '');
+    setEncrypt(initial?.encrypt !== false);
+    setTrust(initial?.trustServerCertificate !== false);
+    setShowPassword(false);
+    setTestState('idle');
+    setTestMsg('');
+    setDatabases([]);
+    setDbListError('');
+  }, [open, initial]);
 
   if (!open) return null;
 

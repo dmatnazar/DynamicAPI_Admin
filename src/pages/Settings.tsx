@@ -5,10 +5,12 @@ import { Badge } from '../components/ui/Badge';
 import { checkGatewayHealth } from '../lib/api';
 
 const SYNC_INTERVAL_OPTIONS = [
-  { label: 'Manual only', value: 0 },
-  { label: 'Every 5 minutes', value: 5 },
-  { label: 'Every 15 minutes', value: 15 },
-  { label: 'Every hour', value: 60 },
+  { value: 15, label: 'Her 15 sekunt' },
+  { value: 30, label: 'Her 30 sekunt' },
+  { value: 60, label: 'Her 1 minut' },
+  { value: 120, label: 'Her 2 minut' },
+  { value: 300, label: 'Her 5 minut' },
+  { value: 0, label: 'Diňe el bilen' },
 ];
 
 export function SettingsPage() {
@@ -24,7 +26,13 @@ export function SettingsPage() {
     window.appAPI.getVersion().then(setVersion);
     window.vaultAPI.get('gatewayUrl').then((v) => v && setGatewayUrl(v));
     window.vaultAPI.get('adminSyncSecret').then((v) => v && setAdminSecret(v));
-    window.vaultAPI.get('autoSyncMinutes').then((v) => v && setAutoSyncMinutes(Number(v)));
+    window.vaultAPI.get('autoSyncSeconds').then((v) => {
+      if (v) setAutoSyncMinutes(Number(v));
+      else window.vaultAPI.get('autoSyncMinutes').then((m) => m && setAutoSyncMinutes(Number(m)));
+    });
+    window.dbAPI?.getSyncMeta?.().then((m) => {
+      if (m?.autoSyncIntervalSec) setAutoSyncMinutes(m.autoSyncIntervalSec);
+    });
   }, []);
 
   const saveGateway = async () => {
@@ -35,7 +43,13 @@ export function SettingsPage() {
   };
 
   const saveSync = async () => {
-    await window.vaultAPI.set('autoSyncMinutes', String(autoSyncMinutes));
+    // value is seconds (label still uses minutes historically)
+    const sec = Number(autoSyncMinutes) || 30;
+    await window.vaultAPI.set('autoSyncSeconds', String(sec));
+    await window.vaultAPI.set('autoSyncMinutes', String(sec)); // legacy key
+    await window.dbAPI?.updateSyncMeta?.({ autoSyncIntervalSec: sec || 30 });
+    // notify sync engine
+    window.dispatchEvent(new CustomEvent('sync-interval-changed', { detail: { sec } }));
     setSavedSection('sync');
     setTimeout(() => setSavedSection(null), 1500);
   };
@@ -116,7 +130,7 @@ export function SettingsPage() {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs text-neutral-400">Auto-sync frequency</label>
+          <label className="text-xs text-neutral-400">Awto-sync aralygy</label>
           <select
             className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm"
             value={autoSyncMinutes}

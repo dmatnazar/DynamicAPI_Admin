@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { EndpointConfig } from '../types/endpoint.types';
+import { enqueueChange } from '../lib/syncEngine';
 
 interface EndpointStore {
   endpointsByTenant: Record<string, EndpointConfig[]>;
@@ -43,6 +44,7 @@ export const useEndpointStore = create<EndpointStore>((set, get) => ({
       activeEndpointId: endpoint.id,
     }));
     void persist(tenantId, endpoint);
+    void enqueueChange('endpoints');
   },
 
   updateEndpoint: (tenantId, id, patch) => {
@@ -56,6 +58,7 @@ export const useEndpointStore = create<EndpointStore>((set, get) => ({
     }));
     const ep = get().endpointsByTenant[tenantId]?.find((e) => e.id === id);
     if (ep) void persist(tenantId, ep);
+    void enqueueChange('endpoints');
   },
 
   removeEndpoint: (tenantId, id) => {
@@ -66,6 +69,7 @@ export const useEndpointStore = create<EndpointStore>((set, get) => ({
       },
     }));
     void window.dbAPI?.deleteEndpoint(id);
+    void enqueueChange('endpoints');
   },
 
   setActiveEndpoint: (id) => set({ activeEndpointId: id }),
