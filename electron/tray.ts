@@ -10,22 +10,34 @@ interface TrayHooks {
 
 let tray: Tray | null = null;
 
-// A tiny built-in fallback icon (16x16 transparent-safe dot) so the tray
-// still works even before you drop a real icon into /build. Replace
-// `build/tray-icon.png` (and tray-icon@2x.png for retina) with your own art —
-// this path is what electron-builder also packages as the app icon source.
-const FALLBACK_ICON_DATA_URL =
+// Emergency 16x16 transparent base64 fallback in case no file exists on disk
+const EMERGENCY_FALLBACK_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGklEQVR4nGNQuvzuPyWYYdSAUQNGDRguBgAAEtbiH+8clfcAAAAASUVORK5CYII=';
 
 function resolveIcon() {
-  const packagedPath = path.join(process.resourcesPath ?? '', 'build', 'tray-icon.png');
-  const devPath = path.join(__dirname, '../build/tray-icon.png');
-  const candidate = app.isPackaged ? packagedPath : devPath;
+  const iconName = 'fallback.ico';
 
-  const img = nativeImage.createFromPath(candidate);
-  if (!img.isEmpty()) return img.resize({ width: 16, height: 16 });
+  // Dev path: moves up from 'dist-electron' into 'electron/assets/icons/'
+  const devPath = path.join(__dirname, '..', 'electron', 'assets', 'icons', iconName);
 
-  return nativeImage.createFromDataURL(FALLBACK_ICON_DATA_URL).resize({ width: 16, height: 16 });
+  // Packaged path: inside electron resources folder
+  const packagedPath = path.join(process.resourcesPath, 'assets', 'icons', iconName);
+
+  const candidatePath = app.isPackaged ? packagedPath : devPath;
+  console.log('Attempting to load icon from:', candidatePath);
+
+  // 1. Try loading from file path
+  const img = nativeImage.createFromPath(candidatePath);
+  if (!img.isEmpty()) {
+    return img.resize({ width: 16, height: 16 });
+  }
+
+  console.warn('Icon file not found or empty. Falling back to base64 icon.');
+
+  // 2. Hard fallback if file fails to load
+  return nativeImage
+    .createFromDataURL(EMERGENCY_FALLBACK_DATA_URL)
+    .resize({ width: 16, height: 16 });
 }
 
 export function createTray(hooks: TrayHooks) {

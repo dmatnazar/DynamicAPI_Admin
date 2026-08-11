@@ -20,6 +20,18 @@ let isQuitting = false;
 
 Menu.setApplicationMenu(null);
 
+function getAppIconPath() {
+  const iconName = 'fallback.ico'; // Replace with your .ico filename if different
+
+  // Dev path: steps up from dist-electron into electron/assets/icons/
+  const devPath = path.join(__dirname, '..', 'electron', 'assets', 'icons', iconName);
+  
+  // Production path: inside resources/assets/icons/
+  const packagedPath = path.join(process.resourcesPath, 'assets', 'icons', iconName);
+
+  return app.isPackaged ? packagedPath : devPath;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -27,6 +39,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#0A0B0F',
+    icon: getAppIconPath(), // <-- Sets app taskbar and window icon
     titleBarStyle: 'hiddenInset',
     autoHideMenuBar: true,
     show: false,
@@ -65,7 +78,6 @@ function createWindow() {
 
   initAutoUpdater(mainWindow);
 }
-
 app.whenReady().then(() => {
   createWindow();
 
