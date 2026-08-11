@@ -55,7 +55,9 @@ export function ConnectionList({
 
       <div className="space-y-2">
         {connections.map((c) => {
-          const testStatus = results[c.id] || c.connectionStatus;
+          const fromTest = results[c.id];
+          const testStatus = (fromTest ?? c.connectionStatus) as TenantConnection['connectionStatus'];
+          const showBadge = testStatus === 'success' || testStatus === 'failed';
           return (
             <div
               key={c.id}
@@ -69,7 +71,7 @@ export function ConnectionList({
                       <Star size={10} /> Primary
                     </span>
                   )}
-                  {testStatus !== 'unknown' && testStatus !== 'testing' && (
+                  {showBadge && (
                     <Badge
                       status={testStatus === 'success' ? 'success' : 'failed'}
                       label={testStatus === 'success' ? 'OK' : 'Fail'}

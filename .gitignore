@@ -4,3 +4,6 @@ dist-electron/
 release/
 *.log
 electron-admin-app.zip
+release/
+release-tool/
+ReleasePublisher.exe

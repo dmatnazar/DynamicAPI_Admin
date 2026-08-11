@@ -23,11 +23,13 @@ contextBridge.exposeInMainWorld('updaterAPI', {
   check: () => ipcRenderer.invoke('updater:check'),
   download: () => ipcRenderer.invoke('updater:download'),
   install: () => ipcRenderer.invoke('updater:install'),
-  onAvailable: (cb: (info: { version: string }) => void) =>
+  setFeedUrl: (url: string) => ipcRenderer.invoke('updater:setFeedUrl', url),
+  getFeedUrl: () => ipcRenderer.invoke('updater:getFeedUrl'),
+  onAvailable: (cb: (info: { version: string; releaseNotes?: string; releaseDate?: string }) => void) =>
     ipcRenderer.on('updater:available', (_e, data) => cb(data)),
-  onProgress: (cb: (p: { percent: number }) => void) =>
+  onProgress: (cb: (p: { percent: number; bytesPerSecond?: number; transferred?: number; total?: number }) => void) =>
     ipcRenderer.on('updater:progress', (_e, data) => cb(data)),
-  onDownloaded: (cb: (info: { version: string }) => void) =>
+  onDownloaded: (cb: (info: { version: string; releaseNotes?: string }) => void) =>
     ipcRenderer.on('updater:downloaded', (_e, data) => cb(data)),
   onError: (cb: (e: { message: string }) => void) =>
     ipcRenderer.on('updater:error', (_e, data) => cb(data)),
@@ -98,4 +100,16 @@ contextBridge.exposeInMainWorld('dbAPI', {
   removeSyncQueueItem: (id: string) => ipcRenderer.invoke('db:removeSyncQueueItem', id),
   getSyncMeta: () => ipcRenderer.invoke('db:getSyncMeta'),
   updateSyncMeta: (patch: unknown) => ipcRenderer.invoke('db:updateSyncMeta', patch),
+});
+
+contextBridge.exposeInMainWorld('appLockAPI', {
+  hasPassword: () => ipcRenderer.invoke('appLock:hasPassword'),
+  setPassword: (plain: string) => ipcRenderer.invoke('appLock:setPassword', plain),
+  clearPassword: () => ipcRenderer.invoke('appLock:clearPassword'),
+  verify: (plain: string) => ipcRenderer.invoke('appLock:verify', plain),
+});
+
+contextBridge.exposeInMainWorld('trayAPI', {
+  setStatus: (status: 'ok' | 'partial' | 'offline') =>
+    ipcRenderer.invoke('tray:setStatus', status),
 });

@@ -5,14 +5,29 @@ directories:
 files:
   - dist
   - dist-electron
+extraResources:
+  - from: electron/assets/icons
+    to: assets/icons
+    filter:
+      - "**/*"
+win:
+  target: nsis
+  icon: electron/assets/icons/icon.ico
 mac:
   target: dmg
   category: public.app-category.developer-tools
-win:
-  target: nsis
+  icon: electron/assets/icons/icon.icns
 linux:
   target: AppImage
+  icon: electron/assets/icons
+nsis:
+  installerIcon: electron/assets/icons/icon.ico
+  uninstallerIcon: electron/assets/icons/icon.ico
+  installerHeaderIcon: electron/assets/icons/icon.ico
+electronDist: node_modules/electron/dist
+
+# Generic HTTP feed on your VPS (upload release/*.exe + latest.yml there)
+# Change URL to your real domain, e.g. https://api.example.com/updates
 publish:
-  provider: github
-  owner: your-github-org
-  repo: dynamic-api-admin
+  provider: generic
+  url: https://YOUR_VPS_DOMAIN/updates

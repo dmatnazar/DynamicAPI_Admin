@@ -17,16 +17,27 @@ declare global {
       verifyPassword: (plain: string, stored: string) => Promise<boolean>;
     };
     updaterAPI: {
-      check: () => Promise<unknown>;
+      check: () => Promise<{ ok?: boolean; version?: string; message?: string } | unknown>;
       download: () => Promise<unknown>;
       install: () => Promise<unknown>;
-      onAvailable: (cb: (info: { version: string }) => void) => void;
-      onProgress: (cb: (p: { percent: number }) => void) => void;
-      onDownloaded: (cb: (info: { version: string }) => void) => void;
+      setFeedUrl: (url: string) => Promise<{ ok: boolean; message?: string }>;
+      getFeedUrl: () => Promise<string>;
+      onAvailable: (cb: (info: { version: string; releaseNotes?: string; releaseDate?: string }) => void) => void;
+      onProgress: (cb: (p: { percent: number; bytesPerSecond?: number; transferred?: number; total?: number }) => void) => void;
+      onDownloaded: (cb: (info: { version: string; releaseNotes?: string }) => void) => void;
       onError: (cb: (e: { message: string }) => void) => void;
     };
     appAPI: {
       getVersion: () => Promise<string>;
+    };
+    appLockAPI: {
+      hasPassword: () => Promise<boolean>;
+      setPassword: (plain: string) => Promise<boolean>;
+      clearPassword: () => Promise<boolean>;
+      verify: (plain: string) => Promise<boolean>;
+    };
+    trayAPI: {
+      setStatus: (status: 'ok' | 'partial' | 'offline') => Promise<boolean>;
     };
     windowAPI: {
       minimize: () => Promise<void>;

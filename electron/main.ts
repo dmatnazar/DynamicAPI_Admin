@@ -1,18 +1,47 @@
-import { app, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, Menu, dialog } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { initAutoUpdater } from './updater';
-import { createTray, destroyTray } from './tray';
+import { createTray, destroyTray, setTrayStatus, resolveIconPath, type TrayConnectionStatus } from './tray';
 import * as localDb from './localDb';
 import * as mssqlHelper from './mssqlHelper';
 
-// 1. AMD GPU baradaky error logy öçürmek üçin (Hardware Acceleration-y yapmak)
 app.disableHardwareAcceleration();
+
+// ---------------------------------------------------------------------------
+// Single instance — eýýäm işleýän bolsa warning + focus
+// ---------------------------------------------------------------------------
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.whenReady().then(() => {
+    dialog.showErrorBox(
+      'Eýýäm işleýär',
+      'Dynamic API Admin eýýäm açyk. Täze penjirä gerek däl — bar bolan penjäni ulanyň.'
+    );
+    app.quit();
+  });
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    dialog.showMessageBox({
+      type: 'warning',
+      title: 'Eýýäm işleýär',
+      message: 'Dynamic API Admin eýýäm işleýär',
+      detail:
+        'Programma eýýäm açyk. Ikinji nusga başladyrylmaýar — bar bolan penjirä getirildi.',
+      buttons: ['OK'],
+      noLink: true,
+    });
+  });
+}
 
 const isDev = !app.isPackaged;
 const VAULT_PATH = path.join(app.getPath('userData'), 'vault.json');
-
 const AUTO_OPEN_DEVTOOLS = process.env.OPEN_DEVTOOLS === '1';
 
 let mainWindow: BrowserWindow | null = null;
@@ -21,15 +50,11 @@ let isQuitting = false;
 Menu.setApplicationMenu(null);
 
 function getAppIconPath() {
-  const iconName = 'fallback.ico'; // Replace with your .ico filename if different
-
-  // Dev path: steps up from dist-electron into electron/assets/icons/
-  const devPath = path.join(__dirname, '..', 'electron', 'assets', 'icons', iconName);
-  
-  // Production path: inside resources/assets/icons/
-  const packagedPath = path.join(process.resourcesPath, 'assets', 'icons', iconName);
-
-  return app.isPackaged ? packagedPath : devPath;
+  for (const name of ['icon.ico', 'app.ico', 'fallback.ico']) {
+    const p = resolveIconPath(name);
+    if (fs.existsSync(p)) return p;
+  }
+  return resolveIconPath('fallback.ico');
 }
 
 function createWindow() {
@@ -39,7 +64,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#0A0B0F',
-    icon: getAppIconPath(), // <-- Sets app taskbar and window icon
+    icon: getAppIconPath(),
     titleBarStyle: 'hiddenInset',
     autoHideMenuBar: true,
     show: false,
@@ -78,32 +103,35 @@ function createWindow() {
 
   initAutoUpdater(mainWindow);
 }
-app.whenReady().then(() => {
-  createWindow();
 
-  createTray({
-    getWindow: () => mainWindow,
-    onShow: () => {
-      if (!mainWindow) return createWindow();
-      mainWindow.show();
-      mainWindow.focus();
-    },
-    onRestart: () => {
-      app.relaunch();
-      isQuitting = true;
-      app.quit();
-    },
-    onQuit: () => {
-      isQuitting = true;
-      app.quit();
-    },
-  });
+if (gotLock) {
+  app.whenReady().then(() => {
+    createWindow();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    else mainWindow?.show();
+    createTray({
+      getWindow: () => mainWindow,
+      onShow: () => {
+        if (!mainWindow) return createWindow();
+        mainWindow.show();
+        mainWindow.focus();
+      },
+      onRestart: () => {
+        app.relaunch();
+        isQuitting = true;
+        app.quit();
+      },
+      onQuit: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    });
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else mainWindow?.show();
+    });
   });
-});
+}
 
 app.on('before-quit', () => {
   isQuitting = true;
@@ -113,10 +141,6 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && isQuitting) app.quit();
 });
-
-// ---------------------------------------------------------------------------
-// Window control IPC
-// ---------------------------------------------------------------------------
 
 ipcMain.handle('window:minimize', () => mainWindow?.minimize());
 ipcMain.handle('window:maximizeToggle', () => {
@@ -135,9 +159,12 @@ ipcMain.handle('window:quitApp', () => {
   app.quit();
 });
 
-// ---------------------------------------------------------------------------
-// Secure local vault
-// ---------------------------------------------------------------------------
+ipcMain.handle('tray:setStatus', (_e, status: TrayConnectionStatus) => {
+  if (status === 'ok' || status === 'partial' || status === 'offline') {
+    setTrayStatus(status);
+  }
+  return true;
+});
 
 function readVault(): Record<string, string> {
   if (!fs.existsSync(VAULT_PATH)) return {};
@@ -176,10 +203,6 @@ ipcMain.handle('vault:delete', (_e, key: string) => {
   return true;
 });
 
-// ---------------------------------------------------------------------------
-// HMAC + staff password hashing
-// ---------------------------------------------------------------------------
-
 ipcMain.handle('crypto:signPayload', (_e, payload: unknown, secret: string) => {
   const body = JSON.stringify(payload);
   return crypto.createHmac('sha256', secret).update(body).digest('hex');
@@ -200,10 +223,8 @@ ipcMain.handle('staff:verifyPassword', (_e, plain: string, stored: string) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 });
 
-/** Reversible encrypt for admin UI "show password" (OS safeStorage) */
 ipcMain.handle('staff:encryptSecret', (_e, plain: string) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    // fallback: base64 only (dev) — not secure but better than nothing
     return Buffer.from(plain, 'utf8').toString('base64');
   }
   return safeStorage.encryptString(plain).toString('base64');
@@ -223,11 +244,57 @@ ipcMain.handle('staff:decryptSecret', (_e, enc: string) => {
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
-// ---------------------------------------------------------------------------
-// Local database IPC — all app data lives in userData/local-admin.db.json
-// Passwords are encrypted with safeStorage before write.
-// ---------------------------------------------------------------------------
+// App unlock password (scrypt hash in vault key appLockPasswordHash)
+ipcMain.handle('appLock:hasPassword', () => {
+  const vault = readVault();
+  return !!vault['appLockPasswordHash'];
+});
 
+ipcMain.handle('appLock:setPassword', (_e, plain: string) => {
+  if (!plain || plain.length < 4) {
+    throw new Error('Parol azyndan 4 simwol bolmaly');
+  }
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(plain, salt, 64).toString('hex');
+  const stored = `${salt}:${hash}`;
+  const vault = readVault();
+  if (safeStorage.isEncryptionAvailable()) {
+    vault['appLockPasswordHash'] = safeStorage.encryptString(stored).toString('base64');
+  } else {
+    vault['appLockPasswordHash'] = Buffer.from(stored, 'utf8').toString('base64');
+  }
+  writeVault(vault);
+  return true;
+});
+
+ipcMain.handle('appLock:clearPassword', () => {
+  const vault = readVault();
+  delete vault['appLockPasswordHash'];
+  writeVault(vault);
+  return true;
+});
+
+ipcMain.handle('appLock:verify', (_e, plain: string) => {
+  const vault = readVault();
+  const enc = vault['appLockPasswordHash'];
+  if (!enc) return true;
+  let stored = '';
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      stored = safeStorage.decryptString(Buffer.from(enc, 'base64'));
+    } else {
+      stored = Buffer.from(enc, 'base64').toString('utf8');
+    }
+  } catch {
+    return false;
+  }
+  const [salt, hash] = (stored || '').split(':');
+  if (!salt || !hash) return false;
+  const candidate = crypto.scryptSync(plain || '', salt, 64).toString('hex');
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(candidate, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+});
 
 ipcMain.handle('mssql:testConnection', async (_e, input: mssqlHelper.MssqlConnectInput) => {
   return mssqlHelper.testMssqlConnection(input);
@@ -238,13 +305,8 @@ ipcMain.handle('mssql:listDatabases', async (_e, input: mssqlHelper.MssqlConnect
 });
 
 ipcMain.handle('db:exportSnapshot', () => localDb.exportSnapshot());
-
-ipcMain.handle('db:upsertCompany', (_e, company: localDb.CompanyRecord) => {
-  return localDb.upsertCompany(company);
-});
-
+ipcMain.handle('db:upsertCompany', (_e, company: localDb.CompanyRecord) => localDb.upsertCompany(company));
 ipcMain.handle('db:deleteCompany', (_e, id: string) => localDb.deleteCompany(id));
-
 ipcMain.handle('db:upsertConnection', (_e, conn: localDb.ConnectionRecord & { password?: string }) => {
   const passwordEnc =
     conn.password !== undefined
@@ -253,17 +315,11 @@ ipcMain.handle('db:upsertConnection', (_e, conn: localDb.ConnectionRecord & { pa
   const { password: _p, ...rest } = conn as localDb.ConnectionRecord & { password?: string };
   return localDb.upsertConnection({ ...rest, passwordEnc });
 });
-
 ipcMain.handle('db:deleteConnection', (_e, id: string) => localDb.deleteConnection(id));
-
 ipcMain.handle('db:upsertStaff', (_e, member: localDb.StaffRecord) => localDb.upsertStaff(member));
-
 ipcMain.handle('db:deleteStaff', (_e, id: string) => localDb.deleteStaff(id));
-
 ipcMain.handle('db:upsertEndpoint', (_e, ep: localDb.EndpointRecord) => localDb.upsertEndpoint(ep));
-
 ipcMain.handle('db:deleteEndpoint', (_e, id: string) => localDb.deleteEndpoint(id));
-
 ipcMain.handle('db:getSettings', () => {
   const s = localDb.getSettings();
   return {
@@ -271,7 +327,6 @@ ipcMain.handle('db:getSettings', () => {
     adminSecret: localDb.decryptSecret(s.adminSecretEnc || ''),
   };
 });
-
 ipcMain.handle('db:updateSettings', (_e, patch: { gatewayUrl?: string; adminSecret?: string }) => {
   const next: Partial<localDb.SettingsRecord> = {};
   if (patch.gatewayUrl !== undefined) next.gatewayUrl = patch.gatewayUrl;
@@ -282,20 +337,14 @@ ipcMain.handle('db:updateSettings', (_e, patch: { gatewayUrl?: string; adminSecr
     adminSecret: localDb.decryptSecret(s.adminSecretEnc || ''),
   };
 });
-
 ipcMain.handle('db:listSyncQueue', () => localDb.listSyncQueue());
-ipcMain.handle('db:enqueueSync', (_e, item: Parameters<typeof localDb.enqueueSync>[0]) =>
-  localDb.enqueueSync(item)
-);
+ipcMain.handle('db:enqueueSync', (_e, item: Parameters<typeof localDb.enqueueSync>[0]) => localDb.enqueueSync(item));
 ipcMain.handle('db:updateSyncQueueItem', (_e, id: string, patch: Partial<localDb.SyncQueueItem>) =>
   localDb.updateSyncQueueItem(id, patch)
 );
 ipcMain.handle('db:removeSyncQueueItem', (_e, id: string) => localDb.removeSyncQueueItem(id));
 ipcMain.handle('db:getSyncMeta', () => localDb.getSyncMeta());
-ipcMain.handle('db:updateSyncMeta', (_e, patch: Partial<localDb.SyncMeta>) =>
-  localDb.updateSyncMeta(patch)
-);
-
+ipcMain.handle('db:updateSyncMeta', (_e, patch: Partial<localDb.SyncMeta>) => localDb.updateSyncMeta(patch));
 ipcMain.handle('mssql:executeQuery', async (_e, input: mssqlHelper.MssqlExecuteInput) => {
   return mssqlHelper.executeMssqlQuery(input);
 });

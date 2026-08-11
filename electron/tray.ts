@@ -1,5 +1,8 @@
 import { Tray, Menu, nativeImage, BrowserWindow, app } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
+
+export type TrayConnectionStatus = 'ok' | 'partial' | 'offline';
 
 interface TrayHooks {
   getWindow: () => BrowserWindow | null;
@@ -9,49 +12,63 @@ interface TrayHooks {
 }
 
 let tray: Tray | null = null;
+let currentStatus: TrayConnectionStatus = 'offline';
 
-// Emergency 16x16 transparent base64 fallback in case no file exists on disk
 const EMERGENCY_FALLBACK_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGklEQVR4nGNQuvzuPyWYYdSAUQNGDRguBgAAEtbiH+8clfcAAAAASUVORK5CYII=';
 
-function resolveIcon() {
-  const iconName = 'fallback.ico';
-
-  // Dev path: moves up from 'dist-electron' into 'electron/assets/icons/'
+/** Resolve path to an icon under electron/assets/icons (dev + packaged). */
+export function resolveIconPath(iconName: string): string {
   const devPath = path.join(__dirname, '..', 'electron', 'assets', 'icons', iconName);
-
-  // Packaged path: inside electron resources folder
   const packagedPath = path.join(process.resourcesPath, 'assets', 'icons', iconName);
+  const candidate = app.isPackaged ? packagedPath : devPath;
+  if (fs.existsSync(candidate)) return candidate;
+  const fbDev = path.join(__dirname, '..', 'electron', 'assets', 'icons', 'fallback.ico');
+  const fbPkg = path.join(process.resourcesPath, 'assets', 'icons', 'fallback.ico');
+  const fb = app.isPackaged ? fbPkg : fbDev;
+  return fs.existsSync(fb) ? fb : candidate;
+}
 
-  const candidatePath = app.isPackaged ? packagedPath : devPath;
-  console.log('Attempting to load icon from:', candidatePath);
-
-  // 1. Try loading from file path
+function loadTrayImage(iconName: string) {
+  const candidatePath = resolveIconPath(iconName);
   const img = nativeImage.createFromPath(candidatePath);
   if (!img.isEmpty()) {
     return img.resize({ width: 16, height: 16 });
   }
+  return nativeImage.createFromDataURL(EMERGENCY_FALLBACK_DATA_URL).resize({ width: 16, height: 16 });
+}
 
-  console.warn('Icon file not found or empty. Falling back to base64 icon.');
+function iconForStatus(status: TrayConnectionStatus): string {
+  if (status === 'ok') return 'tray-ok.ico';
+  if (status === 'partial') return 'tray-partial.ico';
+  return 'tray-offline.ico';
+}
 
-  // 2. Hard fallback if file fails to load
-  return nativeImage
-    .createFromDataURL(EMERGENCY_FALLBACK_DATA_URL)
-    .resize({ width: 16, height: 16 });
+function tooltipForStatus(status: TrayConnectionStatus): string {
+  if (status === 'ok') return 'Dynamic API Admin · VPS + DB bagly';
+  if (status === 'partial') return 'Dynamic API Admin · bölekleýin baglanyşyk';
+  return 'Dynamic API Admin · offline';
 }
 
 export function createTray(hooks: TrayHooks) {
   if (tray) return tray;
 
-  tray = new Tray(resolveIcon());
-  tray.setToolTip('Dynamic API Admin');
+  tray = new Tray(loadTrayImage(iconForStatus(currentStatus)));
+  tray.setToolTip(tooltipForStatus(currentStatus));
 
   const buildMenu = () => {
     const win = hooks.getWindow();
     const visible = !!win && win.isVisible();
+    const statusLabel =
+      currentStatus === 'ok'
+        ? 'Status: OK (VPS + DB)'
+        : currentStatus === 'partial'
+          ? 'Status: Partial'
+          : 'Status: Offline';
 
     return Menu.buildFromTemplate([
       { label: 'Dynamic API Admin', enabled: false },
+      { label: statusLabel, enabled: false },
       { type: 'separator' },
       {
         label: visible ? 'Bring to front' : 'Show window',
@@ -73,6 +90,14 @@ export function createTray(hooks: TrayHooks) {
   tray.setContextMenu(buildMenu());
 
   return tray;
+}
+
+/** Update tray icon + tooltip from renderer (VPS/DB health). */
+export function setTrayStatus(status: TrayConnectionStatus) {
+  currentStatus = status;
+  if (!tray) return;
+  tray.setImage(loadTrayImage(iconForStatus(status)));
+  tray.setToolTip(tooltipForStatus(status));
 }
 
 export function destroyTray() {

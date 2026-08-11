@@ -28,8 +28,9 @@ function slugify(name: string) {
 
 export function CompanyFormModal({ mode, initial, onClose, onSubmit }: Props) {
   const [name, setName] = useState(initial?.name ?? '');
-  const [fullName, setFullName] = useState(initial?.fullName ?? '');
-  const [phones, setPhones] = useState<string[]>(initial?.phones?.length ? initial.phones : ['']);
+  // TenantConfig uses legalName / phone; form UI still exposes fullName / phones[]
+  const [fullName, setFullName] = useState(initial?.legalName ?? '');
+  const [phones, setPhones] = useState<string[]>(initial?.phone ? [initial.phone] : ['']);
   const [address, setAddress] = useState(initial?.address ?? '');
   const [slug, setSlug] = useState(initial?.slug ?? '');
 

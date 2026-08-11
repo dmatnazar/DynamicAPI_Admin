@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Server, ShieldCheck, RefreshCw, Info, Eye, EyeOff } from 'lucide-react';
+import { Server, ShieldCheck, RefreshCw, Info, Eye, EyeOff, Lock } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { checkGatewayHealth } from '../lib/api';
@@ -21,6 +21,13 @@ export function SettingsPage() {
   const [autoSyncMinutes, setAutoSyncMinutes] = useState(0);
   const [savedSection, setSavedSection] = useState<'gateway' | 'sync' | null>(null);
   const [health, setHealth] = useState<'unknown' | 'checking' | 'online' | 'offline'>('unknown');
+  const [lockHas, setLockHas] = useState(false);
+  const [lockPassword, setLockPassword] = useState('');
+  const [lockPassword2, setLockPassword2] = useState('');
+  const [lockMsg, setLockMsg] = useState<string | null>(null);
+  const [showLock, setShowLock] = useState(false);
+  const [updateFeedUrl, setUpdateFeedUrl] = useState('');
+  const [feedMsg, setFeedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     window.appAPI.getVersion().then(setVersion);
@@ -33,7 +40,62 @@ export function SettingsPage() {
     window.dbAPI?.getSyncMeta?.().then((m) => {
       if (m?.autoSyncIntervalSec) setAutoSyncMinutes(m.autoSyncIntervalSec);
     });
+    window.appLockAPI?.hasPassword?.().then((h) => setLockHas(!!h));
+    window.updaterAPI?.getFeedUrl?.().then((u) => u && setUpdateFeedUrl(u));
   }, []);
+
+  const saveFeedUrl = async () => {
+    setFeedMsg(null);
+    const r = await window.updaterAPI.setFeedUrl(updateFeedUrl.trim());
+    if (r?.ok) {
+      setFeedMsg('Update URL saklandy');
+      setTimeout(() => setFeedMsg(null), 2000);
+    } else {
+      setFeedMsg(r?.message || 'Ýalňyşlyk');
+    }
+  };
+
+  const checkUpdatesNow = async () => {
+    setFeedMsg('Barlanýar…');
+    const r = await window.updaterAPI.check();
+    if (r && typeof r === 'object' && 'ok' in r && !(r as { ok?: boolean }).ok) {
+      setFeedMsg((r as { message?: string }).message || 'Update ýok ýa-da baglanyşyk ýalňyş');
+    } else {
+      setFeedMsg('Barlag tamamlandy (täze wersiýa bar bolsa bildiriş çykýar)');
+      setTimeout(() => setFeedMsg(null), 3000);
+    }
+  };
+
+
+  const saveAppLock = async () => {
+    setLockMsg(null);
+    if (lockPassword.length < 4) {
+      setLockMsg('Parol azyndan 4 simwol bolmaly');
+      return;
+    }
+    if (lockPassword !== lockPassword2) {
+      setLockMsg('Parollar gabat gelenok');
+      return;
+    }
+    try {
+      await window.appLockAPI.setPassword(lockPassword);
+      setLockHas(true);
+      setLockPassword('');
+      setLockPassword2('');
+      setLockMsg('Parol saklandy');
+      setTimeout(() => setLockMsg(null), 2000);
+    } catch (e) {
+      setLockMsg(e instanceof Error ? e.message : 'Ýalňyşlyk');
+    }
+  };
+
+  const clearAppLock = async () => {
+    await window.appLockAPI.clearPassword();
+    setLockHas(false);
+    setLockMsg('Parol aýryldy — indiki açylyşda ähli funksiýalar açyk');
+    setTimeout(() => setLockMsg(null), 3000);
+  };
+
 
   const saveGateway = async () => {
     await window.vaultAPI.set('gatewayUrl', gatewayUrl);
@@ -149,6 +211,88 @@ export function SettingsPage() {
 
         <div className="flex justify-end pt-1">
           <Button onClick={saveSync}>{savedSection === 'sync' ? 'Saved ✓' : 'Save'}</Button>
+        </div>
+      </section>
+
+
+
+      {/* Auto-update feed */}
+      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <RefreshCw size={16} className="text-sky-400" />
+          <h3 className="text-sm font-semibold text-neutral-100">Auto-update (VPS)</h3>
+        </div>
+        <p className="text-xs text-neutral-500">
+          Programma açylanda we her 4 sagatda şu URL-den täze wersiýa gözlenýär.
+          VPS-de <span className="font-mono text-neutral-400">/updates/latest.yml</span> we installer .exe bolmaly.
+        </p>
+        <div className="space-y-1.5">
+          <label className="text-xs text-neutral-400">Update feed URL</label>
+          <input
+            className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono"
+            value={updateFeedUrl}
+            onChange={(e) => setUpdateFeedUrl(e.target.value)}
+            placeholder="https://your-domain.com/updates"
+          />
+        </div>
+        {feedMsg && <p className="text-xs text-amber-400">{feedMsg}</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => void saveFeedUrl()}>URL sakla</Button>
+          <Button variant="secondary" onClick={() => void checkUpdatesNow()}>
+            Häzir barla
+          </Button>
+        </div>
+      </section>
+
+      {/* App unlock password */}
+      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Lock size={16} className="text-indigo-400" />
+          <h3 className="text-sm font-semibold text-neutral-100">App giriş paroly</h3>
+        </div>
+        <p className="text-xs text-neutral-500">
+          Parol dogry bolsa ähli menýu açylýar. Parolsyz ýa-da nädogry bolsa diňe Dashboard görünýär.
+          Häzir: {lockHas ? 'parol goýlan' : 'parol ýok (ähli zat açyk)'}.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs text-neutral-400">Täze parol</label>
+            <div className="relative">
+              <input
+                type={showLock ? 'text' : 'password'}
+                className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 pr-9 text-sm"
+                value={lockPassword}
+                onChange={(e) => setLockPassword(e.target.value)}
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500"
+                onClick={() => setShowLock((v) => !v)}
+              >
+                {showLock ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs text-neutral-400">Täzeden ýaz</label>
+            <input
+              type={showLock ? 'text' : 'password'}
+              className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm"
+              value={lockPassword2}
+              onChange={(e) => setLockPassword2(e.target.value)}
+              placeholder="••••••••"
+            />
+          </div>
+        </div>
+        {lockMsg && <p className="text-xs text-amber-400">{lockMsg}</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => void saveAppLock()}>Paroly sakla</Button>
+          {lockHas && (
+            <Button variant="danger" onClick={() => void clearAppLock()}>
+              Paroly aýyr
+            </Button>
+          )}
         </div>
       </section>
 

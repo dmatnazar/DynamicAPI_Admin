@@ -97,7 +97,7 @@ export async function hydrateStoresFromLocalDb(): Promise<void> {
 
     useTenantStore.getState().setTenants(tenants);
 
-    const staff = (snap.staff as StaffMember[]).map((s) => ({
+    const staff = (snap.staff as unknown as StaffMember[]).map((s) => ({
       ...s,
       tenantIds: s.tenantIds || [],
     }));
@@ -105,7 +105,7 @@ export async function hydrateStoresFromLocalDb(): Promise<void> {
 
     const endpointsByTenant: Record<string, EndpointConfig[]> = {};
     for (const raw of snap.endpoints) {
-      const e = raw as EndpointConfig & { companyId: string };
+      const e = raw as unknown as EndpointConfig & { companyId: string };
       const list = endpointsByTenant[e.companyId] ?? [];
       list.push({
         id: e.id,
