@@ -162,6 +162,72 @@ async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string
 
 
 /** Merge staff from VPS into local Electron store (BI → Electron) */
+
+/** Merge active tenants from VPS catalog into local store (BI/Electron parity). */
+async function pullTenantsFromVps(creds: { gatewayUrl: string; adminSecret: string }) {
+  try {
+    const catalog = await fetchCatalogFromVps(creds.gatewayUrl, creds.adminSecret);
+    const store = useTenantStore.getState();
+    const local = store.tenants;
+    const bySlug = new Map(local.map((t) => [t.slug, t]));
+    const activeSlugs = new Set<string>();
+
+    for (const rt of catalog.tenants || []) {
+      if (rt.isActive === false) continue;
+      activeSlugs.add(rt.slug);
+      const existing = bySlug.get(rt.slug);
+      if (existing) {
+        // Update name if changed on VPS/BI
+        if (rt.name && rt.name !== existing.name) {
+          store.updateTenant(existing.id, { name: rt.name });
+        }
+      } else {
+        // New company created on BI/VPS — add shell (no DB connections yet)
+        const now = new Date().toISOString();
+        const id = rt.id || `vps-${rt.slug}`;
+        const shell = {
+          id,
+          slug: rt.slug,
+          name: rt.name || rt.slug,
+          connections: [],
+          dbConnectionString: '',
+          connectionStatus: 'unknown' as const,
+          createdAt: now,
+          updatedAt: rt.updatedAt || now,
+        };
+        // Use setTenants to avoid enqueue storm
+        const next = [...useTenantStore.getState().tenants, shell as any];
+        useTenantStore.getState().setTenants(next);
+        void window.dbAPI?.upsertCompany?.({
+          id,
+          slug: rt.slug,
+          name: rt.name || rt.slug,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    // Soft-remove local tenants that are inactive/missing on VPS (only if we have catalog)
+    if ((catalog.tenants || []).length > 0) {
+      for (const t of [...useTenantStore.getState().tenants]) {
+        // Keep local-only not yet pushed? If slug not in catalog at all, might be pending sync — keep
+        // If in catalog with isActive false, remove local
+        const remote = (catalog.tenants || []).find((x: any) => x.slug === t.slug);
+        if (remote && remote.isActive === false) {
+          useTenantStore.setState((s) => ({
+            tenants: s.tenants.filter((x) => x.id !== t.id),
+            activeTenantId: s.activeTenantId === t.id ? null : s.activeTenantId,
+          }));
+          void window.dbAPI?.deleteCompany?.(t.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[sync] pull tenants failed', err);
+  }
+}
+
 async function pullStaffFromVps(creds: { gatewayUrl: string; adminSecret: string }) {
   try {
     const catalog = await fetchCatalogFromVps(creds.gatewayUrl, creds.adminSecret);
@@ -222,6 +288,7 @@ async function pullStaffFromVps(creds: { gatewayUrl: string; adminSecret: string
 }
 
 async function runFullSync(creds: { gatewayUrl: string; adminSecret: string }) {
+  await pullTenantsFromVps(creds);
   await syncEndpointsAll(creds);
   const users = await syncStaffAll(creds);
   await pullStaffFromVps(creds);
