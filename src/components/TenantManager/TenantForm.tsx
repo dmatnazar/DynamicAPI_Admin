@@ -20,6 +20,7 @@ interface Props {
 const empty: CompanyFormInput = {
   name: '',
   slug: '',
+  isActive: true,
   legalName: '',
   taxId: '',
   registrationNumber: '',
@@ -65,6 +66,7 @@ export function TenantForm({
         ...empty,
         name: initial.name,
         slug: initial.slug,
+        isActive: initial.isActive !== false,
         legalName: initial.legalName || '',
         taxId: initial.taxId || '',
         registrationNumber: initial.registrationNumber || '',
@@ -158,6 +160,7 @@ export function TenantForm({
         onUpdate({
           name: form.name.trim(),
           slug: form.slug.trim(),
+          isActive: form.isActive !== false,
           legalName: form.legalName,
           taxId: form.taxId,
           registrationNumber: form.registrationNumber,
@@ -282,6 +285,24 @@ export function TenantForm({
       <section className="space-y-1.5">
         <label className={labelCls}>Belligler</label>
         <textarea className={inputCls} rows={2} value={form.notes || ''} onChange={(e) => set('notes', e.target.value)} />
+      </section>
+
+      <section className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Status</h4>
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-surface-border"
+            checked={form.isActive !== false}
+            onChange={(e) => set('isActive', e.target.checked)}
+          />
+          <span className="text-sm text-neutral-200">
+            {form.isActive !== false ? 'Aktiw' : 'Passiw'}
+          </span>
+          <span className="text-xs text-neutral-500">
+            (Passiw bolsa UI-da görkezilýär, ýöne işjeň däl)
+          </span>
+        </label>
       </section>
 
       {!isEdit && (

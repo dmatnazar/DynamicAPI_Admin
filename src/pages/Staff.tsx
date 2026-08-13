@@ -9,7 +9,10 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { DataTable, type DataTableColumn } from '../components/ui/DataTable';
 import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toastSuccess, toastError } from '../components/ui/Toast';
 import type { StaffMember } from '../types/staff.types';
+import { acquireEntityLock, releaseEntityLock } from '../lib/entityLock';
+import { deleteStaffOnVps } from '../lib/api';
 
 const ROLE_LABEL: Record<StaffMember['role'], string> = {
   admin: 'Admin',
@@ -28,12 +31,25 @@ export function StaffPage() {
     setModalOpen(true);
   };
 
-  const openEdit = (m: StaffMember) => {
+  const openEdit = async (m: StaffMember) => {
+    try {
+      const ok = await acquireEntityLock({
+        entityType: 'staff',
+        entityId: m.id,
+        openedBy: 'electron',
+      });
+      if (!ok) return;
+    } catch {
+      /* offline / lock error — still open */
+    }
     setEditing(m);
     setModalOpen(true);
   };
 
   const closeModal = () => {
+    if (editing) {
+      void releaseEntityLock({ entityType: 'staff', entityId: editing.id, openedBy: 'electron' });
+    }
     setModalOpen(false);
     setEditing(null);
   };
@@ -53,6 +69,35 @@ export function StaffPage() {
         accessor: (r) => r.username,
         cell: (r) => <span className="text-neutral-400">@{r.username}</span>,
         width: 120,
+      },
+      {
+        id: 'companies',
+        header: 'Firma',
+        accessor: (r) =>
+          (r.tenantIds || [])
+            .map((id) => tenants.find((t) => t.id === id)?.name || id)
+            .join(', '),
+        cell: (r) => {
+          const names = (r.tenantIds || [])
+            .map((id) => tenants.find((t) => t.id === id)?.name)
+            .filter(Boolean) as string[];
+          if (names.length === 0) {
+            return <span className="text-neutral-600 text-xs">—</span>;
+          }
+          return (
+            <div className="flex flex-wrap gap-1">
+              {names.map((n) => (
+                <span
+                  key={n}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/20"
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
+          );
+        },
+        width: 180,
       },
       {
         id: 'phone',
@@ -143,7 +188,24 @@ export function StaffPage() {
                   confirmLabel: 'Poz',
                   danger: true,
                 });
-                if (ok) removeStaff(r.id);
+                if (!ok) return;
+                // Always remove locally first so UI updates immediately
+                removeStaff(r.id);
+                toastSuccess('Işgär pozuldy', 'Lokal + VPS sync');
+                try {
+                  const settings = await window.dbAPI?.getSettings?.();
+                  if (settings?.gatewayUrl && settings?.adminSecret) {
+                    const res = await deleteStaffOnVps(settings.gatewayUrl, settings.adminSecret, {
+                      id: r.id,
+                      username: r.username,
+                    });
+                    if (!res.ok) {
+                      console.warn('VPS staff-delete failed', res.status, res.body);
+                    }
+                  }
+                } catch (e) {
+                  console.warn('VPS staff-delete error', e);
+                }
               }}
               className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-400 hover:bg-rose-500/10"
               title="Poz"

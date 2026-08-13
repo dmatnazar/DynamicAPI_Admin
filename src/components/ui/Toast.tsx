@@ -96,7 +96,7 @@ export function ToastHost() {
   const dismiss = useToastStore((s) => s.dismiss);
 
   return (
-    <div className="fixed top-12 right-3 z-[100] flex flex-col gap-2 w-[min(360px,calc(100vw-1.5rem))] pointer-events-none">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 w-[min(420px,calc(100vw-1.5rem))] pointer-events-none items-stretch">
       {items.map((t) => {
         const st = STYLES[t.variant];
         const Icon = st.icon;

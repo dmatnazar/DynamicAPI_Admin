@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { Building2, MapPin, Phone, Mail, User, Pencil } from 'lucide-react';
 import type { TenantConfig, TenantConnection } from '../../types/endpoint.types';
+import { useEndpointStore } from '../../store/useEndpointStore';
+import { useStaffStore } from '../../store/useStaffStore';
 import { useTenantStore } from '../../store/useTenantStore';
 import { ConnectionList } from './ConnectionList';
 import { ConnectionFormModal } from './ConnectionFormModal';
 import { Button } from '../ui/Button';
+import { toastWarning, toastError, toastSuccess } from '../ui/Toast';
 import { confirmDialog } from '../ui/ConfirmDialog';
 import uuid from '../../lib/uuid';
 import { buildMssqlConnectionString } from '../../types/endpoint.types';
@@ -76,13 +79,27 @@ export function TenantConnectionsPanel({ tenant, onEditCompany }: Props) {
   };
 
   const handleDeleteCompany = async () => {
+    const endpoints = useEndpointStore.getState().endpointsByTenant[tenant.id] || [];
+    const staff = useStaffStore.getState().staff.filter((s) =>
+      (s.tenantIds || []).includes(tenant.id)
+    );
+    if (endpoints.length > 0 || staff.length > 0) {
+      toastWarning(
+        'Pozup bolmaýar',
+        `Bagly: ${staff.length} işgär, ${endpoints.length} API. Ilki olary aýyryň.`
+      );
+      return;
+    }
     const ok = await confirmDialog({
       title: 'Kompaniýany poz',
-      message: `«${tenant.name}» kompaniýasyny we ähli baglanyşyklaryny / endpoint-lerini pozmak isleýärsiňizmi?\n\nBu hereketi yzyna almak mümkin däl.`,
+      message: `«${tenant.name}» kompaniýasyny doly pozmak isleýärsiňizmi?\n\nBagly API / işgär ýok. Bu hereketi yzyna almak mümkin däl.`,
       confirmLabel: 'Poz',
       danger: true,
     });
-    if (ok) removeTenant(tenant.id);
+    if (ok) {
+      removeTenant(tenant.id);
+      toastSuccess('Kompaniýa pozuldy', 'VPS bilen sync');
+    }
   };
 
   const handleDeleteConn = async (c: TenantConnection) => {

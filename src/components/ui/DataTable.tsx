@@ -75,35 +75,54 @@ export function DataTable<T>({
 }: Props<T>) {
   const prefs = loadPrefs(storageKey);
   const [search, setSearch] = useState('');
-  const [sortId, setSortId] = useState<string | null>(prefs?.sortId ?? null);
-  const [sortDir, setSortDir] = useState<SortDir>(prefs?.sortDir ?? null);
+  const [sortId, setSortId] = useState<string | null>(() => prefs?.sortId ?? null);
+  const [sortDir, setSortDir] = useState<SortDir>(() => prefs?.sortDir ?? null);
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(prefs?.pageSize ?? pageSizeOptions[0] ?? 25);
-  const [colOrder, setColOrder] = useState<string[]>(
-    prefs?.colOrder ?? columnsProp.map((c) => c.id)
-  );
+  const [pageSize, setPageSize] = useState(() => prefs?.pageSize ?? pageSizeOptions[0] ?? 25);
+  const [colOrder, setColOrder] = useState<string[]>(() => {
+    const ids = columnsProp.map((c) => c.id);
+    const saved: string[] = Array.isArray(prefs?.colOrder) ? prefs.colOrder : [];
+    const kept = saved.filter((id: string) => ids.includes(id));
+    const missing = ids.filter((id) => !kept.includes(id));
+    return kept.length ? [...kept, ...missing] : ids;
+  });
   const [visibility, setVisibility] = useState<Record<string, boolean>>(() => {
     const base: Record<string, boolean> = {};
     for (const c of columnsProp) base[c.id] = c.visible !== false;
-    return { ...base, ...(prefs?.visibility || {}) };
+    const saved = (prefs?.visibility && typeof prefs.visibility === 'object') ? prefs.visibility : {};
+    return { ...base, ...saved };
   });
   const [colsOpen, setColsOpen] = useState(false);
   const dragCol = useRef<string | null>(null);
+  const prefsReady = useRef(false);
 
-  // persist prefs
+  // persist prefs (skip first paint to avoid overwriting with defaults before merge)
   useEffect(() => {
+    if (!prefsReady.current) {
+      prefsReady.current = true;
+      // still save merged state once so key exists
+      savePrefs(storageKey, { sortId, sortDir, pageSize, colOrder, visibility });
+      return;
+    }
     savePrefs(storageKey, { sortId, sortDir, pageSize, colOrder, visibility });
   }, [storageKey, sortId, sortDir, pageSize, colOrder, visibility]);
 
-  // keep order in sync if new columns appear
+  // keep order / visibility in sync if new columns appear (never reset user choices)
   useEffect(() => {
+    const ids = columnsProp.map((c) => c.id);
     setColOrder((prev) => {
-      const ids = columnsProp.map((c) => c.id);
       const kept = prev.filter((id) => ids.includes(id));
       const missing = ids.filter((id) => !kept.includes(id));
       return [...kept, ...missing];
     });
-  }, [columnsProp]);
+    setVisibility((prev) => {
+      const next = { ...prev };
+      for (const c of columnsProp) {
+        if (next[c.id] === undefined) next[c.id] = c.visible !== false;
+      }
+      return next;
+    });
+  }, [columnsProp.map((c) => c.id).join('|')]);
 
   const orderedCols = useMemo(() => {
     const map = new Map(columnsProp.map((c) => [c.id, c]));

@@ -3,6 +3,9 @@ import type { StaffMember } from '../types/staff.types';
 import { enqueueChange } from '../lib/syncEngine';
 import { toastInfo, toastWarning } from '../components/ui/Toast';
 
+/** Usernames deleted this session — catalog pull must not re-add them */
+export const recentlyDeletedUsernames = new Set<string>();
+
 interface StaffStore {
   staff: StaffMember[];
   activeStaffId: string | null;
@@ -45,6 +48,10 @@ export const useStaffStore = create<StaffStore>((set, get) => ({
   },
 
   removeStaff: (id) => {
+    const victim = get().staff.find((m) => m.id === id);
+    if (victim?.username) {
+      recentlyDeletedUsernames.add(victim.username.toLowerCase());
+    }
     set((s) => ({
       staff: s.staff.filter((m) => m.id !== id),
       activeStaffId: s.activeStaffId === id ? null : s.activeStaffId,

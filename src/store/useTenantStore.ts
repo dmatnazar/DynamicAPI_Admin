@@ -41,6 +41,7 @@ async function persistCompany(tenant: TenantConfig) {
     id: tenant.id,
     slug: tenant.slug,
     name: tenant.name,
+    isActive: tenant.isActive !== false,
     legalName: tenant.legalName,
     taxId: tenant.taxId,
     registrationNumber: tenant.registrationNumber,
@@ -110,12 +111,12 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
 
   removeTenant: (id) => {
     const t = get().tenants.find((x) => x.id === id);
+    // Local remove; VPS hard-delete is handled by caller after dependency checks
     set((s) => ({
       tenants: s.tenants.filter((x) => x.id !== id),
       activeTenantId: s.activeTenantId === id ? null : s.activeTenantId,
     }));
     void window.dbAPI?.deleteCompany(id);
-    // Tell VPS to deactivate so BI catalog drops this company
     if (t?.slug) void enqueueChange('tenant-delete', t.slug);
     void enqueueChange('full-sync');
   },
@@ -219,6 +220,7 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
       id: companyId,
       slug: input.slug,
       name: input.name,
+      isActive: input.isActive !== false, // default active on create
       legalName: input.legalName,
       taxId: input.taxId,
       registrationNumber: input.registrationNumber,

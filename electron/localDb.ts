@@ -12,6 +12,8 @@ export interface CompanyRecord {
   id: string;
   slug: string;
   name: string;
+  /** Soft-active; false = passive (still listed in UI) */
+  isActive?: boolean;
   legalName?: string;
   taxId?: string;
   registrationNumber?: string;

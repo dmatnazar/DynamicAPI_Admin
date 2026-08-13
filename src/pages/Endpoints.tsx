@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { acquireEntityLock, releaseEntityLock } from '../lib/entityLock';
 import { Download, Upload, Plus, Trash2, Play, CloudUpload, Copy } from 'lucide-react';
 import { useTenantStore } from '../store/useTenantStore';
 import { useEndpointStore } from '../store/useEndpointStore';

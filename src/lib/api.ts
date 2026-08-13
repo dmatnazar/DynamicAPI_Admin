@@ -241,7 +241,7 @@ export async function fetchCatalogFromVps(
   return res.json();
 }
 
-/** Soft-delete / deactivate tenant on VPS so BI catalog hides it */
+/** Soft-deactivate tenant on VPS (is_active=0) */
 export async function deactivateTenantOnVps(
   gatewayUrl: string,
   adminSecret: string,
@@ -261,4 +261,64 @@ export async function deactivateTenantOnVps(
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error ? JSON.stringify(body.error) : `Tenant deactivate failed: ${res.status}`);
   }
+}
+
+async function signedPost(gatewayUrl: string, adminSecret: string, path: string, payload: Record<string, unknown>) {
+  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Signature': signature,
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body };
+}
+
+/** Hard-delete tenant — fails with has_dependencies if staff/APIs remain */
+export async function deleteTenantOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  slug: string
+): Promise<{ ok: boolean; status: number; body: any }> {
+  return signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-delete', { slug });
+}
+
+/** Hard-delete staff on VPS */
+export async function deleteStaffOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  opts: { id?: string; username?: string; tenantSlug?: string }
+): Promise<{ ok: boolean; status: number; body: any }> {
+  return signedPost(gatewayUrl, adminSecret, '/api/admin/staff-delete', opts as any);
+}
+
+/** Acquire / release / heartbeat edit lock (is_open) */
+export async function entityLockOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  opts: {
+    entityType: 'tenant' | 'staff' | 'endpoint';
+    entityId: string;
+    action: 'lock' | 'unlock' | 'heartbeat';
+    openedBy?: string;
+  }
+): Promise<{ ok: boolean; status: number; body: any }> {
+  return signedPost(gatewayUrl, adminSecret, '/api/admin/entity-lock', opts as any);
+}
+
+/** Tenant update with optional expectedUpdatedAt concurrency token */
+export async function updateTenantOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  payload: {
+    slug: string;
+    name?: string;
+    isActive?: boolean;
+    expectedUpdatedAt?: string;
+  }
+): Promise<{ ok: boolean; status: number; body: any }> {
+  return signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-update', payload as any);
 }

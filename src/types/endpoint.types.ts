@@ -83,6 +83,8 @@ export interface TenantConfig extends CompanyProfile {
   id: string;
   slug: string;
   name: string;
+  /** Soft-active flag; false = passive (still visible in admin UI) */
+  isActive?: boolean;
   dbConnectionString: string;
   connectionStatus: 'unknown' | 'testing' | 'success' | 'failed';
   connections: TenantConnection[];
@@ -142,6 +144,7 @@ export function buildMssqlConnectionString(config: {
 export type CompanyFormInput = {
   slug: string;
   name: string;
+  isActive?: boolean;
 } & CompanyProfile & {
   connLabel?: string;
   dbType?: DbType;

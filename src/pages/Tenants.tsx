@@ -7,6 +7,7 @@ import { TenantConnectionsPanel } from '../components/TenantManager/TenantConnec
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import type { TenantConfig } from '../types/endpoint.types';
+import { acquireEntityLock, releaseEntityLock } from '../lib/entityLock';
 
 export function TenantsPage() {
   const { tenants, activeTenantId, setActiveTenant, createFromForm, updateTenant, hydrated } =
@@ -26,7 +27,15 @@ export function TenantsPage() {
   }, [hydrated, tenants.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openCreate = () => setCreateOpen(true);
-  const openEdit = () => setEditOpen(true);
+  const openEdit = async () => {
+    if (!activeTenant) return;
+    const ok = await acquireEntityLock({
+      entityType: 'tenant',
+      entityId: activeTenant.id,
+      openedBy: 'electron',
+    });
+    if (ok) setEditOpen(true);
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-4 sm:p-6">
@@ -97,9 +106,13 @@ export function TenantsPage() {
             initial={activeTenant}
             onUpdate={(patch) => {
               updateTenant(activeTenant.id, patch);
+              void releaseEntityLock({ entityType: 'tenant', entityId: activeTenant.id, openedBy: 'electron' });
               setEditOpen(false);
             }}
-            onCancel={() => setEditOpen(false)}
+            onCancel={() => {
+              void releaseEntityLock({ entityType: 'tenant', entityId: activeTenant.id, openedBy: 'electron' });
+              setEditOpen(false);
+            }}
           />
         </Modal>
       )}

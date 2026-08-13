@@ -2,9 +2,9 @@
  * Central sync engine: full sync + persistent offline queue.
  * Runs on startup, on interval, and after every local change.
  */
-import { syncToVps, syncStaffToVps, checkGatewayHealth, fetchCatalogFromVps, deactivateTenantOnVps } from './api';
+import { syncToVps, syncStaffToVps, checkGatewayHealth, fetchCatalogFromVps, deactivateTenantOnVps, deleteTenantOnVps } from './api';
 import { useTenantStore } from '../store/useTenantStore';
-import { useStaffStore } from '../store/useStaffStore';
+import { useStaffStore, recentlyDeletedUsernames } from '../store/useStaffStore';
 import { useEndpointStore } from '../store/useEndpointStore';
 import { toastSuccess, toastError, toastWarning, toastInfo } from '../components/ui/Toast';
 
@@ -161,19 +161,125 @@ async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string
 }
 
 
-/** Merge staff from VPS into local Electron store (BI → Electron) */
-async function pullStaffFromVps(creds: { gatewayUrl: string; adminSecret: string }) {
+/** Merge catalog (tenants, endpoints, staff) from VPS into local Electron stores (BI → Electron) */
+async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: string }) {
   try {
     const catalog = await fetchCatalogFromVps(creds.gatewayUrl, creds.adminSecret);
     const tenants = useTenantStore.getState().tenants;
     const slugToId = new Map(tenants.map((t) => [t.slug, t.id]));
-    const local = useStaffStore.getState().staff;
-    const byUser = new Map(local.map((s) => [s.username.toLowerCase(), s]));
+
+    // 1. Merge Tenants (Companies)
+    for (const ct of catalog.tenants || []) {
+      const existing = tenants.find((t) => t.slug === ct.slug || t.id === ct.id);
+      if (existing) {
+        let changed = false;
+        const patch: Partial<typeof existing> = {};
+        if (ct.name && ct.name !== existing.name) {
+          patch.name = ct.name;
+          changed = true;
+        }
+        if (typeof ct.isActive === 'boolean' && ct.isActive !== existing.isActive) {
+          patch.isActive = ct.isActive;
+          changed = true;
+        }
+        if (changed) {
+          const updated = { ...existing, ...patch };
+          useTenantStore.setState((s) => ({
+            tenants: s.tenants.map((t) => (t.id === existing.id ? updated : t)),
+          }));
+          void window.dbAPI?.upsertCompany?.({
+            id: updated.id,
+            slug: updated.slug,
+            name: updated.name,
+            isActive: updated.isActive !== false,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } else {
+        // Include passive companies so they remain visible in admin UI
+        const newCompany = {
+          id: ct.id || `co-${Date.now()}`,
+          slug: ct.slug,
+          name: ct.name,
+          isActive: ct.isActive !== false,
+          dbConnectionString: '',
+          connectionStatus: 'unknown' as const,
+          connections: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        useTenantStore.setState((s) => ({ tenants: [...s.tenants, newCompany] }));
+        void window.dbAPI?.upsertCompany?.(newCompany);
+        slugToId.set(ct.slug, newCompany.id);
+      }
+    }
+
+    // 2. Merge Endpoints (APIs)
+    const currentTenants = useTenantStore.getState().tenants;
+    const currentSlugToId = new Map(currentTenants.map((t) => [t.slug, t.id]));
+    const endpointsByTenant = useEndpointStore.getState().endpointsByTenant;
+
+    for (const ce of catalog.endpoints || []) {
+      const companyId = currentSlugToId.get(ce.tenantSlug);
+      if (!companyId) continue;
+      const list = endpointsByTenant[companyId] || [];
+      const existing = list.find((e) => e.id === ce.id || (e.name === ce.name && e.pathTemplate === ce.pathTemplate));
+
+      if (existing) {
+        if (existing.name !== ce.name || existing.pathTemplate !== ce.pathTemplate || existing.method !== ce.method) {
+          const patched = {
+            ...existing,
+            name: ce.name,
+            pathTemplate: ce.pathTemplate,
+            method: ce.method as any,
+          };
+          useEndpointStore.setState((s) => ({
+            endpointsByTenant: {
+              ...s.endpointsByTenant,
+              [companyId]: (s.endpointsByTenant[companyId] || []).map((e) => (e.id === existing.id ? patched : e)),
+            },
+          }));
+          void window.dbAPI?.upsertEndpoint?.({
+            ...patched,
+            companyId,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } else {
+        const newEp = {
+          id: ce.id || `ep-${Date.now()}`,
+          companyId,
+          name: ce.name,
+          method: ce.method as any,
+          pathTemplate: ce.pathTemplate,
+          sqlQuery: (ce as any).sqlQuery || 'SELECT 1',
+          paramsSchema: ce.paramsSchema || { urlParams: [], queryParams: [], bodyParams: [] },
+          cacheTtlSec: ce.cacheTtlSec || 0,
+          authRequired: ce.authRequired !== false,
+        };
+        useEndpointStore.setState((s) => ({
+          endpointsByTenant: {
+            ...s.endpointsByTenant,
+            [companyId]: [...(s.endpointsByTenant[companyId] || []), newEp],
+          },
+        }));
+        void window.dbAPI?.upsertEndpoint?.({
+          ...newEp,
+          companyId,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    // 3. Merge Staff
+    const localStaff = useStaffStore.getState().staff;
+    const byUser = new Map(localStaff.map((s) => [s.username.toLowerCase(), s]));
 
     for (const rs of catalog.staff || []) {
       const key = String(rs.username || '').toLowerCase();
       if (!key) continue;
-      const tenantId = slugToId.get(rs.tenantSlug);
+      if (recentlyDeletedUsernames.has(key)) continue;
+      const tenantId = currentSlugToId.get(rs.tenantSlug);
       const existing = byUser.get(key);
       if (existing) {
         const hash =
@@ -198,7 +304,6 @@ async function pullStaffFromVps(creds: { gatewayUrl: string; adminSecret: string
         }));
         void window.dbAPI?.upsertStaff?.({ ...patched, updatedAt: new Date().toISOString() });
       } else if (tenantId) {
-        // New staff from BI
         const member = {
           id: rs.id || `vps-${key}`,
           fullName: rs.fullName || key,
@@ -211,20 +316,19 @@ async function pullStaffFromVps(creds: { gatewayUrl: string; adminSecret: string
           email: rs.email,
           createdAt: new Date().toISOString(),
         };
-        // Direct store mutate without re-enqueue storm: use addStaff would enqueue
         useStaffStore.setState((s) => ({ staff: [...s.staff, member as any] }));
         void window.dbAPI?.upsertStaff?.({ ...member, updatedAt: new Date().toISOString() });
       }
     }
   } catch (err) {
-    console.warn('[sync] pull staff failed', err);
+    console.warn('[sync] pull catalog failed', err);
   }
 }
 
 async function runFullSync(creds: { gatewayUrl: string; adminSecret: string }) {
   await syncEndpointsAll(creds);
   const users = await syncStaffAll(creds);
-  await pullStaffFromVps(creds);
+  await pullCatalogFromVps(creds);
   return users;
 }
 
@@ -298,7 +402,13 @@ export async function processQueue(opts?: { forceFull?: boolean }): Promise<{
             await runFullSync(creds);
           } else if (item.type === 'tenant-delete') {
             if (item.tenantSlug) {
-              await deactivateTenantOnVps(creds.gatewayUrl, creds.adminSecret, item.tenantSlug);
+              const r = await deleteTenantOnVps(creds.gatewayUrl, creds.adminSecret, item.tenantSlug);
+              if (!r.ok && r.status === 409) {
+                // Dependencies remain — fall back to soft-deactivate
+                await deactivateTenantOnVps(creds.gatewayUrl, creds.adminSecret, item.tenantSlug);
+                throw new Error(r.body?.message || 'has_dependencies');
+              }
+              if (!r.ok) throw new Error(r.body?.error || `tenant-delete ${r.status}`);
             }
           } else if (item.type === 'staff') {
             await syncStaffAll(creds);
