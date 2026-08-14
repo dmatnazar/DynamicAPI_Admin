@@ -130,5 +130,30 @@ declare global {
       }>;
       updateSyncMeta: (patch: unknown) => Promise<unknown>;
     };
+    agentAPI?: {
+      getStatuses: () => Promise<
+        Array<{
+          tenantSlug: string;
+          tenantName: string;
+          online: boolean;
+          lastConnectedAt?: string;
+          lastError?: string;
+          reconnectAttempts: number;
+        }>
+      >;
+      restart: () => Promise<boolean>;
+      onStatusChanged: (
+        cb: (
+          statuses: Array<{
+            tenantSlug: string;
+            tenantName: string;
+            online: boolean;
+            lastConnectedAt?: string;
+            lastError?: string;
+            reconnectAttempts: number;
+          }>
+        ) => void
+      ) => () => void;
+    };
   }
 }

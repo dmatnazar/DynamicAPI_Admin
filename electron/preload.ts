@@ -113,3 +113,14 @@ contextBridge.exposeInMainWorld('trayAPI', {
   setStatus: (status: 'ok' | 'partial' | 'offline') =>
     ipcRenderer.invoke('tray:setStatus', status),
 });
+
+contextBridge.exposeInMainWorld('agentAPI', {
+  getStatuses: () => ipcRenderer.invoke('agent:getStatuses'),
+  restart: () => ipcRenderer.invoke('agent:restart'),
+  onStatusChanged: (cb: (statuses: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('agent:statusChanged', handler);
+    return () => ipcRenderer.removeListener('agent:statusChanged', handler);
+  },
+});
+

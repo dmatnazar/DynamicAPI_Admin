@@ -24,11 +24,23 @@ export function TitleBar() {
   const [status, setStatus] = useState<SyncStatusSnapshot | null>(null);
   const [tick, setTick] = useState(0);
   const [msg, setMsg] = useState<string | null>(null);
+  const [tunnelStatuses, setTunnelStatuses] = useState<
+    Array<{ tenantSlug: string; tenantName: string; online: boolean; lastError?: string }>
+  >([]);
 
   useEffect(() => subscribeSyncStatus(setStatus), []);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!window.agentAPI) return;
+    window.agentAPI.getStatuses().then(setTunnelStatuses).catch(() => {});
+    const unsub = window.agentAPI.onStatusChanged((list) => {
+      setTunnelStatuses(list);
+    });
+    return () => unsub?.();
   }, []);
 
   const onSync = async () => {
@@ -40,14 +52,40 @@ export function TitleBar() {
 
   void tick; // re-render countdown
 
+  const onlineTunnels = tunnelStatuses.filter((t) => t.online).length;
+  const totalTunnels = tunnelStatuses.length;
+
   return (
     <div
       className="h-10 shrink-0 flex items-center justify-between pl-3 pr-1.5 bg-surface-raised border-b border-surface-border select-none"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      <span className="text-[11px] font-medium tracking-wide text-neutral-500">
-        Dynamic API Admin
-      </span>
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] font-medium tracking-wide text-neutral-500">
+          Dynamic API Admin
+        </span>
+
+        {/* Live Tunnel Status Badge */}
+        {totalTunnels > 0 && (
+          <div
+            title={`VPS Tunnel: ${onlineTunnels}/${totalTunnels} kompaniýa birikdirilen`}
+            className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+              onlineTunnels > 0
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                : 'bg-rose-500/10 text-rose-300 border-rose-500/20'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                onlineTunnels > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+              }`}
+            />
+            <span>
+              VPS Tunnel: {onlineTunnels > 0 ? `Online (${onlineTunnels})` : 'Bagly däl'}
+            </span>
+          </div>
+        )}
+      </div>
 
       <div
         className="flex items-center gap-2"

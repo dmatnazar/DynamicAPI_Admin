@@ -6,6 +6,7 @@ import { initAutoUpdater } from './updater';
 import { createTray, destroyTray, setTrayStatus, resolveIconPath, type TrayConnectionStatus } from './tray';
 import * as localDb from './localDb';
 import * as mssqlHelper from './mssqlHelper';
+import { localAgentManager, initLocalAgentIpc } from './localAgent';
 
 app.disableHardwareAcceleration();
 
@@ -106,6 +107,8 @@ function createWindow() {
 
 if (gotLock) {
   app.whenReady().then(() => {
+    initLocalAgentIpc();
+    localAgentManager.start();
     createWindow();
 
     createTray({
@@ -135,6 +138,7 @@ if (gotLock) {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  localAgentManager.stop();
   destroyTray();
 });
 
