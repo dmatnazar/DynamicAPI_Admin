@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('updaterAPI', {
   check: () => ipcRenderer.invoke('updater:check'),
   download: () => ipcRenderer.invoke('updater:download'),
   install: () => ipcRenderer.invoke('updater:install'),
+  getConfig: () => ipcRenderer.invoke('updater:getConfig'),
+  saveConfig: (cfg: unknown) => ipcRenderer.invoke('updater:saveConfig', cfg),
   setFeedUrl: (url: string) => ipcRenderer.invoke('updater:setFeedUrl', url),
   getFeedUrl: () => ipcRenderer.invoke('updater:getFeedUrl'),
   onAvailable: (cb: (info: { version: string; releaseNotes?: string; releaseDate?: string }) => void) =>
@@ -123,4 +125,17 @@ contextBridge.exposeInMainWorld('agentAPI', {
     return () => ipcRenderer.removeListener('agent:statusChanged', handler);
   },
 });
+
+contextBridge.exposeInMainWorld('deviceAPI', {
+  getProfile: () => ipcRenderer.invoke('device:getProfile'),
+  register: () => ipcRenderer.invoke('device:register'),
+  checkStatus: () => ipcRenderer.invoke('device:checkStatus'),
+  saveProfile: (patch: unknown) => ipcRenderer.invoke('device:saveProfile', patch),
+});
+
+contextBridge.exposeInMainWorld('authAPI', {
+  loginStaff: (credentials: { username: string; password: string; companyId?: string }) =>
+    ipcRenderer.invoke('auth:loginStaff', credentials),
+});
+
 

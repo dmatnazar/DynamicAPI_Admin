@@ -7,6 +7,12 @@ import { createTray, destroyTray, setTrayStatus, resolveIconPath, type TrayConne
 import * as localDb from './localDb';
 import * as mssqlHelper from './mssqlHelper';
 import { localAgentManager, initLocalAgentIpc } from './localAgent';
+import {
+  loadOrGenerateDeviceProfile,
+  saveDeviceProfile,
+  registerDeviceWithGateway,
+  checkDeviceStatusWithGateway,
+} from './deviceFingerprint';
 
 app.disableHardwareAcceleration();
 
@@ -18,7 +24,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     dialog.showErrorBox(
       'Eýýäm işleýär',
-      'Dynamic API Admin eýýäm açyk. Täze penjirä gerek däl — bar bolan penjäni ulanyň.'
+      'BI Platform Client eýýäm açyk. Täze penjirä gerek däl — bar bolan penjäni ulanyň.'
     );
     app.quit();
   });
@@ -32,7 +38,7 @@ if (!gotLock) {
     dialog.showMessageBox({
       type: 'warning',
       title: 'Eýýäm işleýär',
-      message: 'Dynamic API Admin eýýäm işleýär',
+      message: 'BI Platform Client eýýäm işleýär',
       detail:
         'Programma eýýäm açyk. Ikinji nusga başladyrylmaýar — bar bolan penjirä getirildi.',
       buttons: ['OK'],
@@ -66,7 +72,7 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#0A0B0F',
     icon: getAppIconPath(),
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -352,3 +358,116 @@ ipcMain.handle('db:updateSyncMeta', (_e, patch: Partial<localDb.SyncMeta>) => lo
 ipcMain.handle('mssql:executeQuery', async (_e, input: mssqlHelper.MssqlExecuteInput) => {
   return mssqlHelper.executeMssqlQuery(input);
 });
+
+// ── Device & Hardware Handlers ──────────────────────────────────────────
+
+ipcMain.handle('device:getProfile', () => {
+  return loadOrGenerateDeviceProfile();
+});
+
+ipcMain.handle('device:saveProfile', (_e, patch: any) => {
+  return saveDeviceProfile(patch);
+});
+
+ipcMain.handle('device:register', async () => {
+  const settings = localDb.getSettings();
+  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
+  return registerDeviceWithGateway(settings.gatewayUrl, secret);
+});
+
+ipcMain.handle('device:checkStatus', async () => {
+  const settings = localDb.getSettings();
+  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
+  return checkDeviceStatusWithGateway(settings.gatewayUrl, secret);
+});
+
+// ── Staff Login / Authentication Handlers ───────────────────────────────
+
+ipcMain.handle('auth:loginStaff', async (_e, credentials: { username: string; password: string; companyId?: string }) => {
+  const { username, password } = credentials;
+  if (!username || !password) {
+    return { ok: false, error: 'Ulanyjy ady we parol gerek' };
+  }
+
+  const snapshot = localDb.exportSnapshot();
+  const staffList = snapshot.staff || [];
+  const companies = snapshot.companies || [];
+
+  // Match by username (case-insensitive)
+  const member = staffList.find((s) => s.username.toLowerCase() === username.trim().toLowerCase());
+
+  if (member) {
+    if (!member.active) {
+      return { ok: false, error: 'Bu ulanyjy işjeň däl (deactivated). Administrator bilen habarlaşyň.' };
+    }
+
+    // Verify password
+    let passwordMatches = false;
+    if (member.passwordHash && member.passwordHash.includes(':')) {
+      const [salt, hash] = member.passwordHash.split(':');
+      if (salt && hash) {
+        const candidate = crypto.scryptSync(password, salt, 64).toString('hex');
+        const a = Buffer.from(hash, 'hex');
+        const b = Buffer.from(candidate, 'hex');
+        passwordMatches = a.length === b.length && crypto.timingSafeEqual(a, b);
+      }
+    } else {
+      // Plain / legacy fallback
+      passwordMatches = member.passwordHash === password;
+    }
+
+    if (!passwordMatches) {
+      return { ok: false, error: 'Parol nädogry' };
+    }
+
+    const company = companies.find((c) => c.id === member.companyId);
+    return {
+      ok: true,
+      user: {
+        id: member.id,
+        username: member.username,
+        fullName: member.fullName,
+        role: member.role || 'viewer',
+        companyId: member.companyId,
+        companySlug: company?.slug || '',
+        companyName: company?.name || '',
+      },
+    };
+  }
+
+  // Fallback: Check if device / local DB has no staff yet or master admin login
+  const settings = localDb.getSettings();
+  const adminSecret = localDb.decryptSecret(settings.adminSecretEnc || '');
+
+  if (username.trim().toLowerCase() === 'admin') {
+    if (adminSecret && password === adminSecret) {
+      return {
+        ok: true,
+        user: {
+          id: 'master-admin',
+          username: 'admin',
+          fullName: 'Ulgam Dolandyryjysy (Admin)',
+          role: 'admin',
+          isSuperAdmin: true,
+        },
+      };
+    }
+
+    // If staff list is empty, allow initial setup password "admin"
+    if (staffList.length === 0 && (password === 'admin' || password === '123456')) {
+      return {
+        ok: true,
+        user: {
+          id: 'initial-admin',
+          username: 'admin',
+          fullName: 'Ulgam Dolandyryjysy',
+          role: 'admin',
+          isSuperAdmin: true,
+        },
+      };
+    }
+  }
+
+  return { ok: false, error: 'Ulanyjy tapylmady ýa-da parol nädogry' };
+});
+

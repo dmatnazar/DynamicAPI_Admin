@@ -1,8 +1,26 @@
 import { useEffect, useState } from 'react';
-import { Server, ShieldCheck, RefreshCw, Info, Eye, EyeOff, Lock } from 'lucide-react';
+import {
+  Server,
+  ShieldCheck,
+  RefreshCw,
+  Info,
+  Eye,
+  EyeOff,
+  Lock,
+  Cpu,
+  HardDrive,
+  Globe,
+  Building2,
+  Copy,
+  Check,
+  Shield,
+  KeyRound,
+  User,
+} from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { checkGatewayHealth } from '../lib/api';
+import { useDeviceStore } from '../store/useDeviceStore';
 
 const SYNC_INTERVAL_OPTIONS = [
   { value: 15, label: 'Her 15 sekunt' },
@@ -14,187 +32,407 @@ const SYNC_INTERVAL_OPTIONS = [
 ];
 
 export function SettingsPage() {
+  const { profile, checkStatus: recheckDevice, checking: deviceChecking } = useDeviceStore();
   const [version, setVersion] = useState('');
   const [gatewayUrl, setGatewayUrl] = useState('http://localhost:4000');
   const [adminSecret, setAdminSecret] = useState('');
   const [showSecret, setShowSecret] = useState(false);
   const [autoSyncMinutes, setAutoSyncMinutes] = useState(0);
-  const [savedSection, setSavedSection] = useState<'gateway' | 'sync' | null>(null);
+  const [savedSection, setSavedSection] = useState<'gateway' | 'sync' | 'update' | null>(null);
   const [health, setHealth] = useState<'unknown' | 'checking' | 'online' | 'offline'>('unknown');
-  const [lockHas, setLockHas] = useState(false);
-  const [lockPassword, setLockPassword] = useState('');
-  const [lockPassword2, setLockPassword2] = useState('');
-  const [lockMsg, setLockMsg] = useState<string | null>(null);
-  const [showLock, setShowLock] = useState(false);
-  const [updateFeedUrl, setUpdateFeedUrl] = useState('');
+  const [copiedId, setCopiedId] = useState(false);
+
+  // Auto-update structured configuration
+  const [upProtocol, setUpProtocol] = useState<'http' | 'https'>('https');
+  const [upHost, setUpHost] = useState('216.250.13.39');
+  const [upPort, setUpPort] = useState('');
+  const [upPath, setUpPath] = useState('/updates');
+  const [upUsername, setUpUsername] = useState('');
+  const [upPassword, setUpPassword] = useState('');
+  const [showUpPassword, setShowUpPassword] = useState(false);
   const [feedMsg, setFeedMsg] = useState<string | null>(null);
+  const [feedChecking, setFeedChecking] = useState(false);
 
   useEffect(() => {
-    window.appAPI.getVersion().then(setVersion);
-    window.vaultAPI.get('gatewayUrl').then((v) => v && setGatewayUrl(v));
-    window.vaultAPI.get('adminSyncSecret').then((v) => v && setAdminSecret(v));
-    window.vaultAPI.get('autoSyncSeconds').then((v) => {
+    window.appAPI?.getVersion?.().then(setVersion);
+    window.vaultAPI?.get('gatewayUrl').then((v: string | null) => v && setGatewayUrl(v));
+    window.vaultAPI?.get('adminSyncSecret').then((v: string | null) => v && setAdminSecret(v));
+    window.vaultAPI?.get('autoSyncSeconds').then((v: string | null) => {
       if (v) setAutoSyncMinutes(Number(v));
-      else window.vaultAPI.get('autoSyncMinutes').then((m) => m && setAutoSyncMinutes(Number(m)));
+      else window.vaultAPI?.get('autoSyncMinutes').then((m: string | null) => m && setAutoSyncMinutes(Number(m)));
     });
-    window.dbAPI?.getSyncMeta?.().then((m) => {
+    window.dbAPI?.getSyncMeta?.().then((m: any) => {
       if (m?.autoSyncIntervalSec) setAutoSyncMinutes(m.autoSyncIntervalSec);
     });
-    window.appLockAPI?.hasPassword?.().then((h) => setLockHas(!!h));
-    window.updaterAPI?.getFeedUrl?.().then((u) => u && setUpdateFeedUrl(u));
+
+    // Load structured update feed config
+    if ((window as any).updaterAPI?.getConfig) {
+      (window as any).updaterAPI.getConfig().then((cfg: any) => {
+        if (cfg) {
+          setUpProtocol(cfg.protocol || 'https');
+          setUpHost(cfg.host || '216.250.13.39');
+          setUpPort(cfg.port ? String(cfg.port) : '');
+          setUpPath(cfg.path || '/updates');
+          setUpUsername(cfg.username || '');
+          setUpPassword(cfg.password || '');
+        }
+      });
+    }
   }, []);
 
-  const saveFeedUrl = async () => {
+  const handleCopyId = () => {
+    if (!profile?.id) return;
+    navigator.clipboard.writeText(profile.id);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  };
+
+  const saveUpdateConfig = async () => {
     setFeedMsg(null);
-    const r = await window.updaterAPI.setFeedUrl(updateFeedUrl.trim());
-    if (r?.ok) {
-      setFeedMsg('Update URL saklandy');
-      setTimeout(() => setFeedMsg(null), 2000);
-    } else {
-      setFeedMsg(r?.message || 'Ýalňyşlyk');
+    try {
+      if ((window as any).updaterAPI?.saveConfig) {
+        const res = await (window as any).updaterAPI.saveConfig({
+          protocol: upProtocol,
+          host: upHost.trim(),
+          port: upPort.trim(),
+          path: upPath.trim(),
+          username: upUsername.trim(),
+          password: upPassword,
+        });
+        if (res?.ok) {
+          setFeedMsg(`Sazlamalar saklandy: ${res.url}`);
+          setSavedSection('update');
+          setTimeout(() => {
+            setSavedSection(null);
+            setFeedMsg(null);
+          }, 3500);
+        } else {
+          setFeedMsg('Ýalňyşlyk: URL düzülmedi');
+        }
+      }
+    } catch (e: any) {
+      setFeedMsg(e?.message || 'Ýalňyşlyk ýüze çykdy');
     }
   };
 
   const checkUpdatesNow = async () => {
-    setFeedMsg('Barlanýar…');
-    const r = await window.updaterAPI.check();
-    if (r && typeof r === 'object' && 'ok' in r && !(r as { ok?: boolean }).ok) {
-      setFeedMsg((r as { message?: string }).message || 'Update ýok ýa-da baglanyşyk ýalňyş');
-    } else {
-      setFeedMsg('Barlag tamamlandy (täze wersiýa bar bolsa bildiriş çykýar)');
-      setTimeout(() => setFeedMsg(null), 3000);
-    }
-  };
-
-
-  const saveAppLock = async () => {
-    setLockMsg(null);
-    if (lockPassword.length < 4) {
-      setLockMsg('Parol azyndan 4 simwol bolmaly');
-      return;
-    }
-    if (lockPassword !== lockPassword2) {
-      setLockMsg('Parollar gabat gelenok');
-      return;
-    }
+    setFeedChecking(true);
+    setFeedMsg('VPS barlanýar…');
     try {
-      await window.appLockAPI.setPassword(lockPassword);
-      setLockHas(true);
-      setLockPassword('');
-      setLockPassword2('');
-      setLockMsg('Parol saklandy');
-      setTimeout(() => setLockMsg(null), 2000);
-    } catch (e) {
-      setLockMsg(e instanceof Error ? e.message : 'Ýalňyşlyk');
+      const r = await window.updaterAPI.check();
+      if (r && typeof r === 'object' && 'ok' in r && !(r as { ok?: boolean }).ok) {
+        setFeedMsg((r as { message?: string }).message || 'Update tapylmady ýa-da baglanyşyk ýalňyş');
+      } else {
+        setFeedMsg('Barlag tamamlandy (täze wersiýa bar bolsa täzelener)');
+      }
+    } catch {
+      setFeedMsg('VPS-e birigip bolmady');
+    } finally {
+      setFeedChecking(false);
+      setTimeout(() => setFeedMsg(null), 4000);
     }
   };
-
-  const clearAppLock = async () => {
-    await window.appLockAPI.clearPassword();
-    setLockHas(false);
-    setLockMsg('Parol aýryldy — indiki açylyşda ähli funksiýalar açyk');
-    setTimeout(() => setLockMsg(null), 3000);
-  };
-
 
   const saveGateway = async () => {
-    await window.vaultAPI.set('gatewayUrl', gatewayUrl);
-    await window.vaultAPI.set('adminSyncSecret', adminSecret);
+    const cleanUrl = gatewayUrl.trim().replace(/\/$/, '');
+    await window.vaultAPI.set('gatewayUrl', cleanUrl);
+    await window.vaultAPI.set('adminSyncSecret', adminSecret.trim());
+    await window.dbAPI?.updateSettings?.({
+      gatewayUrl: cleanUrl,
+      adminSecret: adminSecret.trim(),
+    });
     setSavedSection('gateway');
-    setTimeout(() => setSavedSection(null), 1500);
+    setTimeout(() => setSavedSection(null), 2000);
   };
 
-  const saveSync = async () => {
-    // value is seconds (label still uses minutes historically)
-    const sec = Number(autoSyncMinutes) || 30;
-    await window.vaultAPI.set('autoSyncSeconds', String(sec));
-    await window.vaultAPI.set('autoSyncMinutes', String(sec)); // legacy key
-    await window.dbAPI?.updateSyncMeta?.({ autoSyncIntervalSec: sec || 30 });
-    // notify sync engine
-    window.dispatchEvent(new CustomEvent('sync-interval-changed', { detail: { sec } }));
-    setSavedSection('sync');
-    setTimeout(() => setSavedSection(null), 1500);
-  };
-
-  const testGateway = async () => {
+  const testHealth = async () => {
     setHealth('checking');
     const ok = await checkGatewayHealth(gatewayUrl);
     setHealth(ok ? 'online' : 'offline');
   };
 
+  const saveSync = async () => {
+    await window.vaultAPI.set('autoSyncSeconds', String(autoSyncMinutes));
+    await window.dbAPI?.updateSyncMeta?.({
+      autoSyncIntervalSec: autoSyncMinutes,
+    });
+    setSavedSection('sync');
+    setTimeout(() => setSavedSection(null), 2000);
+  };
+
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-2xl">
+    <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
+      {/* Header */}
       <div>
-        <h2 className="text-lg font-semibold text-neutral-100">Settings</h2>
-        <p className="text-xs text-neutral-500 mt-0.5">Manage how this admin app talks to your VPS Gateway.</p>
+        <h2 className="text-lg font-bold tracking-tight text-neutral-100 flex items-center gap-2">
+          <Server className="h-5 w-5 text-primary-400" />
+          Sazlamalar & Enjam Maglumatlary
+        </h2>
+        <p className="text-xs text-neutral-500 mt-0.5">
+          Programmanyň VPS Gateway, MSSQL baglanyşyklary we awtomatiki täzelenme sazlamalary.
+        </p>
       </div>
 
-      {/* VPS Gateway connection */}
-      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Server size={16} className="text-accent" />
-          <h3 className="text-sm font-semibold text-neutral-100">VPS Gateway connection</h3>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs text-neutral-400">Gateway URL</label>
-          <input
-            className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono"
-            value={gatewayUrl}
-            onChange={(e) => setGatewayUrl(e.target.value)}
-            placeholder="http://localhost:4000"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs text-neutral-400 flex items-center gap-1.5">
-            <ShieldCheck size={12} /> Admin sync secret
-          </label>
-          <div className="relative">
-            <input
-              type={showSecret ? 'text' : 'password'}
-              className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 pr-9 text-sm font-mono"
-              value={adminSecret}
-              onChange={(e) => setAdminSecret(e.target.value)}
-              placeholder="Must match ADMIN_SYNC_SECRET on the gateway's .env"
-            />
-            <button
-              type="button"
-              onClick={() => setShowSecret((v) => !v)}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-200"
-            >
-              {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
+      {/* Device Hardware Profile Card */}
+      <section className="rounded-xl border border-primary-500/30 bg-surface-card p-4 sm:p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={18} className="text-emerald-400" />
+            <h3 className="text-sm font-semibold text-neutral-100">Enjam Maglumatlary (Device Profile)</h3>
           </div>
-          <p className="text-[11px] text-neutral-600 flex items-start gap-1">
-            <Info size={12} className="mt-0.5 shrink-0" />
-            Stored encrypted on this device via the OS keychain — never synced anywhere.
-          </p>
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-800/80 text-[11px] font-medium text-emerald-300">
+            <Shield size={12} />
+            {profile?.status === 'approved' ? 'Tassyklanan (Active)' : profile?.status || 'Garaşylýar'}
+          </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button variant="secondary" onClick={testGateway}>
-            {health === 'checking' ? 'Checking…' : 'Test connection'}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          <div className="p-3 rounded-lg bg-surface-raised border border-surface-border space-y-1.5 font-mono">
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">Device ID:</span>
+              <button
+                onClick={handleCopyId}
+                className="text-primary-400 hover:text-primary-300 flex items-center gap-1"
+                title="Göçürmek"
+              >
+                {profile?.id || '—'}
+                {copiedId ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">Host:</span>
+              <span className="text-neutral-200">{profile?.hostname || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">Firma:</span>
+              <span className="text-primary-300 font-semibold">{profile?.companyName || profile?.tenantSlug || 'Hemme firmalar'}</span>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-surface-raised border border-surface-border space-y-1.5 font-mono">
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">OS:</span>
+              <span className="text-neutral-200">{profile?.osPlatform} {profile?.osRelease}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">RAM:</span>
+              <span className="text-neutral-200">{profile?.ramGb ? `${profile.ramGb} GB` : '—'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">IP:</span>
+              <span className="text-neutral-200">{profile?.ipAddress || '—'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <Button
+            variant="secondary"
+            onClick={() => void recheckDevice()}
+            disabled={deviceChecking}
+            className="text-xs flex items-center gap-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${deviceChecking ? 'animate-spin' : ''}`} />
+            Enjamy Täzeden Barlamak
           </Button>
-          {health !== 'unknown' && health !== 'checking' && (
-            <Badge status={health === 'online' ? 'success' : 'failed'} label={health === 'online' ? 'Online' : 'Offline'} />
-          )}
-          <div className="flex-1" />
-          <Button onClick={saveGateway}>{savedSection === 'gateway' ? 'Saved ✓' : 'Save'}</Button>
         </div>
       </section>
 
-      {/* Sync behaviour */}
+      {/* Gateway connection */}
+      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Server size={16} className="text-indigo-400" />
+            <h3 className="text-sm font-semibold text-neutral-100">VPS Gateway Baglanyşygy</h3>
+          </div>
+          {health !== 'unknown' && (
+            <Badge
+              status={health === 'online' ? 'success' : health === 'checking' ? 'testing' : 'failed'}
+              label={health === 'checking' ? 'Barlanýar…' : health === 'online' ? 'Online' : 'Offline'}
+            />
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-xs text-neutral-400">VPS Gateway URL</label>
+            <input
+              className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono"
+              value={gatewayUrl}
+              onChange={(e) => setGatewayUrl(e.target.value)}
+              placeholder="https://your-domain.com ýa-da http://216.250.13.39:4000"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-neutral-400">Admin Sync Secret</label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 pr-9 text-sm font-mono"
+                value={adminSecret}
+                onChange={(e) => setAdminSecret(e.target.value)}
+                placeholder="VPS .env faýlyndaky ADMIN_SYNC_SECRET"
+              />
+              <button
+                type="button"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                onClick={() => setShowSecret((v) => !v)}
+              >
+                {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <Button variant="secondary" onClick={testHealth} disabled={health === 'checking'}>
+            Statusy Barla
+          </Button>
+          <Button onClick={saveGateway}>{savedSection === 'gateway' ? 'Saklandy ✓' : 'Ýatda Sakla'}</Button>
+        </div>
+      </section>
+
+      {/* Auto-update feed with VPS Credentials */}
+      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <RefreshCw size={16} className="text-sky-400" />
+            <h3 className="text-sm font-semibold text-neutral-100">Awtomatiki Täzelenme (VPS Auto-Update)</h3>
+          </div>
+          <span className="text-xs text-neutral-500 font-mono">v{version || '1.0.0'}</span>
+        </div>
+
+        <p className="text-xs text-neutral-400">
+          Programma açylanda we her 4 sagatda VPS serwerinden täze wersiýany barlar we awtomatiki täzelär.
+        </p>
+
+        <div className="space-y-3">
+          {/* Protocol, Host, Port */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+            <div className="sm:col-span-3 space-y-1">
+              <label className="text-xs text-neutral-400">Protokol:</label>
+              <select
+                className="w-full bg-surface-raised border border-surface-border rounded-lg px-2.5 py-2 text-sm text-white font-mono focus:outline-none focus:border-primary-500"
+                value={upProtocol}
+                onChange={(e) => setUpProtocol(e.target.value as any)}
+              >
+                <option value="https">HTTPS</option>
+                <option value="http">HTTP</option>
+              </select>
+            </div>
+
+            <div className="sm:col-span-6 space-y-1">
+              <label className="text-xs text-neutral-400">VPS IP / Domen:</label>
+              <input
+                type="text"
+                className="w-full bg-surface-raised border border-surface-border rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-primary-500"
+                value={upHost}
+                onChange={(e) => setUpHost(e.target.value)}
+                placeholder="216.250.13.39 ýa-da api.domain.com"
+              />
+            </div>
+
+            <div className="sm:col-span-3 space-y-1">
+              <label className="text-xs text-neutral-400">Port (Islege görä):</label>
+              <input
+                type="text"
+                className="w-full bg-surface-raised border border-surface-border rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-primary-500"
+                value={upPort}
+                onChange={(e) => setUpPort(e.target.value)}
+                placeholder="mysal: 443"
+              />
+            </div>
+          </div>
+
+          {/* Path */}
+          <div className="space-y-1">
+            <label className="text-xs text-neutral-400">Papka Ýoly (Path):</label>
+            <input
+              type="text"
+              className="w-full bg-surface-raised border border-surface-border rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-primary-500"
+              value={upPath}
+              onChange={(e) => setUpPath(e.target.value)}
+              placeholder="/updates"
+            />
+          </div>
+
+          {/* VPS Auth Credentials */}
+          <div className="p-3.5 rounded-xl bg-surface-raised/70 border border-surface-border space-y-3">
+            <p className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
+              <KeyRound size={13} className="text-primary-400" />
+              VPS (Ubuntu) Hasap Giriş Maglumatlary (Goragly Feed üçin):
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-400">VPS Login (Username):</label>
+                <div className="relative">
+                  <User className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-neutral-500" />
+                  <input
+                    type="text"
+                    className="w-full bg-surface-card border border-surface-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+                    value={upUsername}
+                    onChange={(e) => setUpUsername(e.target.value)}
+                    placeholder="Islege görä"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-400">VPS Parol:</label>
+                <div className="relative">
+                  <KeyRound className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-neutral-500" />
+                  <input
+                    type={showUpPassword ? 'text' : 'password'}
+                    className="w-full bg-surface-card border border-surface-border rounded-lg pl-8 pr-8 py-1.5 text-xs text-white"
+                    value={upPassword}
+                    onChange={(e) => setUpPassword(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-2 text-neutral-500"
+                    onClick={() => setShowUpPassword((v) => !v)}
+                  >
+                    {showUpPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {feedMsg && <p className="text-xs text-amber-400 font-mono">{feedMsg}</p>}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <Button
+            variant="secondary"
+            onClick={checkUpdatesNow}
+            disabled={feedChecking}
+            className="flex items-center gap-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${feedChecking ? 'animate-spin' : ''}`} />
+            {feedChecking ? 'Barlanýar...' : 'Häzir Update Barla'}
+          </Button>
+
+          <Button onClick={saveUpdateConfig}>
+            {savedSection === 'update' ? 'Saklandy ✓' : 'Update Sazlamasyny Ýatda Sakla'}
+          </Button>
+        </div>
+      </section>
+
+      {/* Sync settings */}
       <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2">
-          <RefreshCw size={16} className="text-accent" />
-          <h3 className="text-sm font-semibold text-neutral-100">Sync behaviour</h3>
+          <RefreshCw size={16} className="text-emerald-400" />
+          <h3 className="text-sm font-semibold text-neutral-100">Awtomatiki Sinhronizasiýa</h3>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs text-neutral-400">Awto-sync aralygy</label>
+          <label className="text-xs text-neutral-400">Sinhronizasiýa wagty</label>
           <select
-            className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm"
+            className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm text-white"
             value={autoSyncMinutes}
             onChange={(e) => setAutoSyncMinutes(Number(e.target.value))}
           >
@@ -204,101 +442,15 @@ export function SettingsPage() {
               </option>
             ))}
           </select>
-          <p className="text-[11px] text-neutral-600">
-            When offline, changes are queued locally and pushed automatically once the gateway is reachable again.
+          <p className="text-[11px] text-neutral-500">
+            Offline wagty üýtgeşmeler ýerli SQLite bazasynda saklanýar we internet açylanda awtomatiki sinhronlanýar.
           </p>
         </div>
 
         <div className="flex justify-end pt-1">
-          <Button onClick={saveSync}>{savedSection === 'sync' ? 'Saved ✓' : 'Save'}</Button>
+          <Button onClick={saveSync}>{savedSection === 'sync' ? 'Saklandy ✓' : 'Ýatda Sakla'}</Button>
         </div>
       </section>
-
-
-
-      {/* Auto-update feed */}
-      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <RefreshCw size={16} className="text-sky-400" />
-          <h3 className="text-sm font-semibold text-neutral-100">Auto-update (VPS)</h3>
-        </div>
-        <p className="text-xs text-neutral-500">
-          Programma açylanda we her 4 sagatda şu URL-den täze wersiýa gözlenýär.
-          VPS-de <span className="font-mono text-neutral-400">/updates/latest.yml</span> we installer .exe bolmaly.
-        </p>
-        <div className="space-y-1.5">
-          <label className="text-xs text-neutral-400">Update feed URL</label>
-          <input
-            className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono"
-            value={updateFeedUrl}
-            onChange={(e) => setUpdateFeedUrl(e.target.value)}
-            placeholder="https://your-domain.com/updates"
-          />
-        </div>
-        {feedMsg && <p className="text-xs text-amber-400">{feedMsg}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => void saveFeedUrl()}>URL sakla</Button>
-          <Button variant="secondary" onClick={() => void checkUpdatesNow()}>
-            Häzir barla
-          </Button>
-        </div>
-      </section>
-
-      {/* App unlock password */}
-      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Lock size={16} className="text-indigo-400" />
-          <h3 className="text-sm font-semibold text-neutral-100">App giriş paroly</h3>
-        </div>
-        <p className="text-xs text-neutral-500">
-          Parol dogry bolsa ähli menýu açylýar. Parolsyz ýa-da nädogry bolsa diňe Dashboard görünýär.
-          Häzir: {lockHas ? 'parol goýlan' : 'parol ýok (ähli zat açyk)'}.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label className="text-xs text-neutral-400">Täze parol</label>
-            <div className="relative">
-              <input
-                type={showLock ? 'text' : 'password'}
-                className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 pr-9 text-sm"
-                value={lockPassword}
-                onChange={(e) => setLockPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-              <button
-                type="button"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500"
-                onClick={() => setShowLock((v) => !v)}
-              >
-                {showLock ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-neutral-400">Täzeden ýaz</label>
-            <input
-              type={showLock ? 'text' : 'password'}
-              className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm"
-              value={lockPassword2}
-              onChange={(e) => setLockPassword2(e.target.value)}
-              placeholder="••••••••"
-            />
-          </div>
-        </div>
-        {lockMsg && <p className="text-xs text-amber-400">{lockMsg}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => void saveAppLock()}>Paroly sakla</Button>
-          {lockHas && (
-            <Button variant="danger" onClick={() => void clearAppLock()}>
-              Paroly aýyr
-            </Button>
-          )}
-        </div>
-      </section>
-
-      <div className="pt-2 border-t border-surface-border flex items-center justify-between">
-        <p className="text-xs text-neutral-500">App version: {version || '—'}</p>
-      </div>
     </div>
   );
 }

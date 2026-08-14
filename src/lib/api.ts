@@ -322,3 +322,5 @@ export async function updateTenantOnVps(
 ): Promise<{ ok: boolean; status: number; body: any }> {
   return signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-update', payload as any);
 }
+
+

@@ -1,33 +1,46 @@
-appId: com.yourcompany.dynamicapiadmin
-productName: Dynamic API Admin
+appId: com.matnazar.bi-platform-client
+productName: BI Platform Client
+copyright: Copyright © 2024–2026 Matnazar Durdymyradov
+npmRebuild: false
+
 directories:
   output: release
+
 files:
   - dist
   - dist-electron
+
 extraResources:
   - from: electron/assets/icons
     to: assets/icons
     filter:
       - "**/*"
+
 win:
-  target: nsis
+  target:
+    - target: nsis
+      arch:
+        - x64
   icon: electron/assets/icons/icon.ico
-mac:
-  target: dmg
-  category: public.app-category.developer-tools
-  icon: electron/assets/icons/icon.icns
-linux:
-  target: AppImage
-  icon: electron/assets/icons
+  artifactName: "${productName} Setup ${version}.${ext}"
+
 nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: BI Platform Client
   installerIcon: electron/assets/icons/icon.ico
   uninstallerIcon: electron/assets/icons/icon.ico
   installerHeaderIcon: electron/assets/icons/icon.ico
+  menuCategory: BI Platform Client
+  runAfterFinish: true
+  installerSidebar: null
+  deleteAppDataOnUninstall: false
+
 electronDist: node_modules/electron/dist
 
-# Generic HTTP feed on your VPS (upload release/*.exe + latest.yml there)
-# Change URL to your real domain, e.g. https://api.example.com/updates
 publish:
   provider: generic
-  url: https://YOUR_VPS_DOMAIN/updates
+  url: https://216.250.13.39/updates

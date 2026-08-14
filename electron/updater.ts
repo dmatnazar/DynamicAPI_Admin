@@ -1,5 +1,5 @@
 import { autoUpdater } from 'electron-updater';
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain, app, safeStorage } from 'electron';
 import log from 'electron-log';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -7,45 +7,111 @@ import fs from 'node:fs';
 autoUpdater.logger = log;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
-// Allow channel / prerelease if needed later
 autoUpdater.allowPrerelease = false;
 
-/** Default public update folder on your VPS (no trailing slash required). */
-const DEFAULT_UPDATE_URL = 'https://YOUR_VPS_DOMAIN/updates';
-
-function readUpdateUrlFromDisk(): string | null {
-  try {
-    // Optional override file next to userData
-    const p = path.join(app.getPath('userData'), 'update-feed.json');
-    if (fs.existsSync(p)) {
-      const j = JSON.parse(fs.readFileSync(p, 'utf8')) as { url?: string };
-      if (j.url && /^https?:\/\//i.test(j.url)) return j.url.replace(/\/$/, '');
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+export interface UpdateFeedConfig {
+  protocol: 'http' | 'https';
+  host: string;
+  port?: number | string;
+  path: string;
+  username?: string;
+  password?: string;
 }
 
-function configureFeed() {
-  // Priority: env → userData/update-feed.json → default constant
-  const fromEnv = (process.env.UPDATE_FEED_URL || '').trim().replace(/\/$/, '');
-  const fromFile = readUpdateUrlFromDisk();
-  const url = fromEnv || fromFile || DEFAULT_UPDATE_URL;
+const DEFAULT_UPDATE_URL = 'https://216.250.13.39/updates';
 
-  // Skip clearly-placeholder URLs in production so we don't spam errors
-  if (!url || url.includes('YOUR_VPS_DOMAIN')) {
-    log.warn('[updater] UPDATE_FEED_URL not configured — set env or userData/update-feed.json');
+function getFeedConfigPath(): string {
+  return path.join(app.getPath('userData'), 'update-feed-config.json');
+}
+
+export function readFeedConfig(): UpdateFeedConfig {
+  const p = getFeedConfigPath();
+  if (fs.existsSync(p)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+      let password = raw.password || '';
+      if (raw.passwordEnc && safeStorage.isEncryptionAvailable()) {
+        try {
+          password = safeStorage.decryptString(Buffer.from(raw.passwordEnc, 'base64'));
+        } catch {
+          /* ignore */
+        }
+      }
+      return {
+        protocol: raw.protocol || 'https',
+        host: raw.host || '216.250.13.39',
+        port: raw.port || '',
+        path: raw.path || '/updates',
+        username: raw.username || '',
+        password,
+      };
+    } catch {
+      /* fallback */
+    }
+  }
+  return {
+    protocol: 'https',
+    host: '216.250.13.39',
+    port: '',
+    path: '/updates',
+    username: '',
+    password: '',
+  };
+}
+
+export function saveFeedConfig(cfg: UpdateFeedConfig) {
+  const p = getFeedConfigPath();
+  const toSave: any = {
+    protocol: cfg.protocol || 'https',
+    host: cfg.host.trim(),
+    port: cfg.port || '',
+    path: cfg.path.startsWith('/') ? cfg.path : `/${cfg.path}`,
+    username: cfg.username?.trim() || '',
+  };
+
+  if (cfg.password && safeStorage.isEncryptionAvailable()) {
+    toSave.passwordEnc = safeStorage.encryptString(cfg.password).toString('base64');
+  } else if (cfg.password) {
+    toSave.password = cfg.password;
+  }
+
+  fs.writeFileSync(p, JSON.stringify(toSave, null, 2), 'utf8');
+}
+
+export function constructFeedUrl(cfg: UpdateFeedConfig): string {
+  const host = cfg.host.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const portPart = cfg.port ? `:${cfg.port}` : '';
+  const cleanPath = (cfg.path || '/updates').startsWith('/') ? cfg.path : `/${cfg.path}`;
+  return `${cfg.protocol}://${host}${portPart}${cleanPath}`;
+}
+
+function configureFeed(): boolean {
+  const cfg = readFeedConfig();
+  if (!cfg.host) {
+    log.warn('[updater] Update host is not configured.');
     return false;
   }
 
-  autoUpdater.setFeedURL({
-    provider: 'generic',
-    url,
-    // Windows uses latest.yml at {url}/latest.yml
-  });
-  log.info('[updater] feed URL =', url);
-  return true;
+  const url = constructFeedUrl(cfg);
+  const requestHeaders: Record<string, string> = {};
+
+  if (cfg.username && cfg.password) {
+    const creds = Buffer.from(`${cfg.username}:${cfg.password}`).toString('base64');
+    requestHeaders['Authorization'] = `Basic ${creds}`;
+  }
+
+  try {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url,
+      requestHeaders,
+    });
+    log.info('[updater] Configured feed URL =', url);
+    return true;
+  } catch (err) {
+    log.error('[updater] Failed to configure feed:', err);
+    return false;
+  }
 }
 
 export function initAutoUpdater(mainWindow: BrowserWindow) {
@@ -97,7 +163,7 @@ export function initAutoUpdater(mainWindow: BrowserWindow) {
 
   ipcMain.handle('updater:check', async () => {
     if (!feedOk && !configureFeed()) {
-      return { ok: false, message: 'Update feed URL not configured' };
+      return { ok: false, message: 'Update feed sazlanmadyk' };
     }
     try {
       const r = await autoUpdater.checkForUpdates();
@@ -114,28 +180,38 @@ export function initAutoUpdater(mainWindow: BrowserWindow) {
     setImmediate(() => autoUpdater.quitAndInstall(false, true));
   });
 
+  ipcMain.handle('updater:getConfig', () => {
+    return readFeedConfig();
+  });
+
+  ipcMain.handle('updater:saveConfig', (_e, cfg: UpdateFeedConfig) => {
+    saveFeedConfig(cfg);
+    const ok = configureFeed();
+    return { ok, url: constructFeedUrl(cfg) };
+  });
+
+  // Legacy setFeedUrl compatibility
   ipcMain.handle('updater:setFeedUrl', (_e, url: string) => {
-    if (!url || !/^https?:\/\//i.test(url)) {
-      return { ok: false, message: 'Invalid URL' };
-    }
-    const clean = url.replace(/\/$/, '');
     try {
-      const p = path.join(app.getPath('userData'), 'update-feed.json');
-      fs.writeFileSync(p, JSON.stringify({ url: clean }, null, 2), 'utf8');
-      autoUpdater.setFeedURL({ provider: 'generic', url: clean });
-      log.info('[updater] feed URL updated =', clean);
+      const parsed = new URL(url);
+      saveFeedConfig({
+        protocol: parsed.protocol.replace(':', '') as any,
+        host: parsed.hostname,
+        port: parsed.port || '',
+        path: parsed.pathname,
+      });
+      configureFeed();
       return { ok: true };
     } catch (e) {
-      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+      return { ok: false, message: 'Invalid URL' };
     }
   });
 
   ipcMain.handle('updater:getFeedUrl', () => {
-    const fromFile = readUpdateUrlFromDisk();
-    return fromFile || process.env.UPDATE_FEED_URL || DEFAULT_UPDATE_URL;
+    const cfg = readFeedConfig();
+    return constructFeedUrl(cfg);
   });
 
-  // Only auto-check when packaged (installer build), not in vite dev
   if (app.isPackaged && (feedOk || configureFeed())) {
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(() => {});

@@ -45,9 +45,9 @@ function iconForStatus(status: TrayConnectionStatus): string {
 }
 
 function tooltipForStatus(status: TrayConnectionStatus): string {
-  if (status === 'ok') return 'Dynamic API Admin · VPS + DB bagly';
-  if (status === 'partial') return 'Dynamic API Admin · bölekleýin baglanyşyk';
-  return 'Dynamic API Admin · offline';
+  if (status === 'ok') return 'BI Platform Client · VPS + DB bagly';
+  if (status === 'partial') return 'BI Platform Client · bölekleýin baglanyşyk';
+  return 'BI Platform Client · offline';
 }
 
 export function createTray(hooks: TrayHooks) {
@@ -67,7 +67,7 @@ export function createTray(hooks: TrayHooks) {
           : 'Status: Offline';
 
     return Menu.buildFromTemplate([
-      { label: 'Dynamic API Admin', enabled: false },
+      { label: 'BI Platform Client', enabled: false },
       { label: statusLabel, enabled: false },
       { type: 'separator' },
       {

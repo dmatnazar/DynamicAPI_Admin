@@ -61,6 +61,8 @@ function getCredentials(): { gatewayUrl: string; adminSecret: string } | null {
   return null;
 }
 
+import { loadOrGenerateDeviceProfile } from './deviceFingerprint';
+
 class LocalAgentManager {
   private activeSockets = new Map<string, ActiveSocket>();
   private statuses = new Map<string, TenantAgentStatus>();
@@ -116,6 +118,13 @@ class LocalAgentManager {
 
   public syncConnections() {
     if (!this.isRunning) return;
+
+    // Check device approval status
+    const dev = loadOrGenerateDeviceProfile();
+    if (dev.status !== 'approved') {
+      console.log(`[LocalAgent] ⏳ Device (${dev.id}) status is "${dev.status}". Tunnel waiting for admin confirmation.`);
+      return;
+    }
 
     const creds = getCredentials();
     if (!creds || !creds.gatewayUrl || !creds.adminSecret) {

@@ -1,4 +1,14 @@
-Dynamic API Admin — feature update
+BI Platform Client — Desktop Programma
+Developer: Matnazar Durdymyradov
+
+Kärhananyň maglumat bazalaryny dolandyrmak we analitika
+dashboard-laryny görkezmek üçin desktop programma.
+MSSQL bilen işleýär, VPS Gateway arkaly uzakdan sinhronlaşdyrýar.
+
+Minimum OS: Windows Server 2012 R2 / Windows 7 SP1
+Electron: 22.x (Win7/8/Server 2012 R2 goldaw berýär)
+
+================================================================
 
 1) Single instance
    - Ikinji açylyşda Windows dialog: "Eýýäm işleýär"
@@ -12,7 +22,6 @@ Dynamic API Admin — feature update
 3) App icon (installer + taskbar)
    electron/assets/icons/icon.ico
    Multi-size: 16,24,32,48,64,128,256
-   See README-ICONS.txt
 
 4) Tray status icons
    tray-ok.ico       — VPS + DB OK
@@ -20,5 +29,8 @@ Dynamic API Admin — feature update
    tray-offline.ico  — hiç biri / internet ýok
    Size: 16x16 or 32x32 .ico
 
-Copy files into project (same paths), put real .ico files,
-then: npm run build
+5) Build etmek
+   npm install
+   npm run build
+
+   release/ papkasynda "BI Platform Client Setup 1.0.0.exe" dörediler.

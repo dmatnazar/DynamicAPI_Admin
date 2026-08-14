@@ -1,7 +1,7 @@
 {
-  "name": "dynamic-api-admin",
+  "name": "bi-platform-client",
   "version": "1.0.0",
-  "description": "Desktop admin app for the Dynamic API Generator system",
+  "description": "BI Platform Client — Kärhananyň maglumat bazalaryny dolandyrmak we analitika dashboard-laryny görkezmek üçin desktop programma. MSSQL bilen işleýär, VPS Gateway arkaly uzakdan sinhronlaşdyrýar.",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,6 @@
     "@codemirror/lang-sql": "^6.8.0",
     "@codemirror/view": "^6.35.0",
     "@uiw/react-codemirror": "^4.23.7",
-    "bufferutil": "^4.1.0",
     "electron-log": "^5.2.0",
     "electron-updater": "^6.3.0",
     "framer-motion": "^11.3.24",
@@ -24,7 +23,6 @@
     "mssql": "^11.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "utf-8-validate": "^6.0.6",
     "ws": "^8.21.3",
     "zod": "^3.23.8",
     "zustand": "^4.5.4"
@@ -36,7 +34,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "electron": "^31.3.0",
+    "electron": "^22.3.27",
     "electron-builder": "^24.13.3",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
@@ -45,5 +43,5 @@
     "vite-plugin-electron": "^0.28.7",
     "vite-plugin-electron-renderer": "^0.14.5"
   },
-  "author": "Dynamic API Admin"
+  "author": "Matnazar Durdymyradov"
 }

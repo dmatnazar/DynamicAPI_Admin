@@ -62,7 +62,7 @@ export function TitleBar() {
     >
       <div className="flex items-center gap-3">
         <span className="text-[11px] font-medium tracking-wide text-neutral-500">
-          Dynamic API Admin
+          BI Platform Client
         </span>
 
         {/* Live Tunnel Status Badge */}
