@@ -1,5 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
+import WebSocket from 'ws';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import fs from 'node:fs';
 import * as localDb from './localDb';
 import * as mssqlHelper from './mssqlHelper';
 
@@ -14,8 +17,48 @@ export interface TenantAgentStatus {
 
 interface ActiveSocket {
   tenantSlug: string;
-  socket: WebSocket;
+  socket: WebSocket | null;
   reconnectTimer?: NodeJS.Timeout;
+}
+
+function getCredentials(): { gatewayUrl: string; adminSecret: string } | null {
+  // 1) Try localDb settings first
+  try {
+    const s = localDb.getSettings();
+    const gUrl = (s.gatewayUrl || '').trim();
+    const sec = localDb.decryptSecret(s.adminSecretEnc || '').trim();
+    if (gUrl && sec) return { gatewayUrl: gUrl, adminSecret: sec };
+  } catch {
+    /* ignore */
+  }
+
+  // 2) Try vault.json fallback
+  try {
+    const vaultPath = path.join(app.getPath('userData'), 'vault.json');
+    if (fs.existsSync(vaultPath)) {
+      const data = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
+      let gatewayUrl = data.gatewayUrl || '';
+      let adminSecret = data.adminSyncSecret || data.adminSecret || '';
+
+      if (safeStorage.isEncryptionAvailable()) {
+        try {
+          if (gatewayUrl && !gatewayUrl.startsWith('http')) {
+            gatewayUrl = safeStorage.decryptString(Buffer.from(gatewayUrl, 'base64'));
+          }
+          if (adminSecret) {
+            adminSecret = safeStorage.decryptString(Buffer.from(adminSecret, 'base64'));
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      if (gatewayUrl && adminSecret) return { gatewayUrl: gatewayUrl.trim(), adminSecret: adminSecret.trim() };
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return null;
 }
 
 class LocalAgentManager {
@@ -27,12 +70,13 @@ class LocalAgentManager {
   public start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    console.log('[LocalAgent] 🚀 Starting Local Agent Tunnel Manager...');
     this.syncConnections();
 
     // Check periodically for added/removed companies or settings changes
     this.refreshTimer = setInterval(() => {
       if (this.isRunning) this.syncConnections();
-    }, 15_000);
+    }, 10_000);
   }
 
   public stop() {
@@ -44,7 +88,9 @@ class LocalAgentManager {
     for (const [slug, item] of this.activeSockets.entries()) {
       if (item.reconnectTimer) clearTimeout(item.reconnectTimer);
       try {
-        item.socket.close();
+        if (item.socket && item.socket.readyState === WebSocket.OPEN) {
+          item.socket.close();
+        }
       } catch {
         /* ignore */
       }
@@ -71,15 +117,13 @@ class LocalAgentManager {
   public syncConnections() {
     if (!this.isRunning) return;
 
-    const settings = localDb.getSettings();
-    const gatewayUrl = (settings.gatewayUrl || '').trim();
-    const adminSecret = localDb.decryptSecret(settings.adminSecretEnc || '').trim();
-
-    if (!gatewayUrl || !adminSecret) {
-      // Cannot connect without VPS gateway settings
+    const creds = getCredentials();
+    if (!creds || !creds.gatewayUrl || !creds.adminSecret) {
+      console.log('[LocalAgent] ⚠️ Gateway credentials not configured yet in Electron Settings.');
       return;
     }
 
+    const { gatewayUrl, adminSecret } = creds;
     const companies = localDb.listCompanies();
     const activeSlugs = new Set<string>();
 
@@ -99,7 +143,8 @@ class LocalAgentManager {
         });
       }
 
-      if (!this.activeSockets.has(slug)) {
+      const existing = this.activeSockets.get(slug);
+      if (!existing || (!existing.socket && !existing.reconnectTimer)) {
         this.connectTenant(company, gatewayUrl, adminSecret);
       }
     }
@@ -109,7 +154,7 @@ class LocalAgentManager {
       if (!activeSlugs.has(slug)) {
         if (item.reconnectTimer) clearTimeout(item.reconnectTimer);
         try {
-          item.socket.close();
+          if (item.socket) item.socket.close();
         } catch {
           /* ignore */
         }
@@ -139,9 +184,16 @@ class LocalAgentManager {
     const appVersion = app.isPackaged ? app.getVersion() : 'dev';
     const wsUrl = `${wsBase}/ws/agent?tenantSlug=${encodeURIComponent(slug)}&signature=${encodeURIComponent(signature)}&client=Electron_${encodeURIComponent(appVersion)}`;
 
+    console.log(`[LocalAgent] 🔄 Connecting WebSocket tunnel for "${slug}" → ${wsUrl.replace(/signature=.*/, 'signature=***')}`);
+
     try {
-      // Uses built-in Node/Electron WebSocket
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl, {
+        headers: {
+          'X-Admin-Signature': signature,
+          'User-Agent': `Electron-LocalAgent/${appVersion}`,
+        },
+        rejectUnauthorized: false, // allow self-signed / IP certs in dev/LAN
+      });
 
       const activeItem: ActiveSocket = {
         tenantSlug: slug,
@@ -149,7 +201,7 @@ class LocalAgentManager {
       };
       this.activeSockets.set(slug, activeItem);
 
-      ws.onopen = () => {
+      ws.on('open', () => {
         const st = this.statuses.get(slug) || {
           tenantSlug: slug,
           tenantName: company.name,
@@ -162,12 +214,12 @@ class LocalAgentManager {
         st.reconnectAttempts = 0;
         this.statuses.set(slug, st);
         this.broadcastStatus();
-        console.log(`[LocalAgent] 🟢 Connected to VPS WebSocket tunnel for company "${slug}"`);
-      };
+        console.log(`[LocalAgent] 🟢 Tunnel CONNECTED for company "${slug}" (${company.name})`);
+      });
 
-      ws.onmessage = async (event: MessageEvent) => {
+      ws.on('message', async (data: WebSocket.RawData) => {
         try {
-          const raw = typeof event.data === 'string' ? event.data : event.data?.toString?.('utf8');
+          const raw = data.toString('utf8');
           if (!raw) return;
           const msg = JSON.parse(raw);
 
@@ -177,30 +229,33 @@ class LocalAgentManager {
           }
 
           if (msg.type === 'EXECUTE_QUERY' && msg.requestId) {
+            console.log(`[LocalAgent] 📥 Executing query [${msg.requestId}] on local MSSQL for "${slug}"`);
             await this.handleExecuteQuery(ws, company, msg);
           }
         } catch (err) {
           console.warn(`[LocalAgent] Error handling message for "${slug}":`, err);
         }
-      };
+      });
 
-      ws.onclose = () => {
-        this.handleDisconnect(company, gatewayUrl, adminSecret);
-      };
+      ws.on('close', (code, reason) => {
+        console.warn(`[LocalAgent] 🔴 Tunnel closed for "${slug}" (code: ${code}, reason: ${reason?.toString() || 'none'})`);
+        this.handleDisconnect(company, gatewayUrl, adminSecret, reason?.toString());
+      });
 
-      ws.onerror = (evt: Event) => {
+      ws.on('error', (err: Error) => {
+        console.warn(`[LocalAgent] ⚠️ WebSocket error for "${slug}":`, err.message);
         const st = this.statuses.get(slug);
         if (st) {
-          st.lastError = 'WebSocket connection error';
+          st.lastError = err.message;
         }
-      };
+      });
     } catch (err) {
       console.warn(`[LocalAgent] Failed to initiate WebSocket for "${slug}":`, err);
-      this.handleDisconnect(company, gatewayUrl, adminSecret);
+      this.handleDisconnect(company, gatewayUrl, adminSecret, (err as Error).message);
     }
   }
 
-  private handleDisconnect(company: localDb.CompanyRecord, gatewayUrl: string, adminSecret: string) {
+  private handleDisconnect(company: localDb.CompanyRecord, gatewayUrl: string, adminSecret: string, errorMsg?: string) {
     const slug = company.slug;
     const st = this.statuses.get(slug) || {
       tenantSlug: slug,
@@ -210,6 +265,7 @@ class LocalAgentManager {
     };
     st.online = false;
     st.reconnectAttempts = (st.reconnectAttempts || 0) + 1;
+    if (errorMsg) st.lastError = errorMsg;
     this.statuses.set(slug, st);
     this.broadcastStatus();
 
@@ -217,7 +273,7 @@ class LocalAgentManager {
 
     if (!this.isRunning) return;
 
-    // Exponential backoff reconnect: 3s -> 6s -> 10s max
+    // Exponential backoff reconnect: 3s -> 5s -> 10s max
     const delay = Math.min(10_000, 2_000 + st.reconnectAttempts * 1_500);
     const timer = setTimeout(() => {
       if (this.isRunning) {
@@ -227,7 +283,7 @@ class LocalAgentManager {
 
     this.activeSockets.set(slug, {
       tenantSlug: slug,
-      socket: null as any,
+      socket: null,
       reconnectTimer: timer,
     });
   }
@@ -270,6 +326,7 @@ class LocalAgentManager {
       });
 
       if (execResult.ok) {
+        console.log(`[LocalAgent] ✅ Query [${requestId}] success: ${execResult.rowCount} rows in ${execResult.elapsedMs}ms`);
         ws.send(
           JSON.stringify({
             type: 'QUERY_RESULT',
@@ -281,6 +338,7 @@ class LocalAgentManager {
           })
         );
       } else {
+        console.warn(`[LocalAgent] ❌ Query [${requestId}] failed on local MSSQL:`, execResult.message);
         ws.send(
           JSON.stringify({
             type: 'QUERY_RESULT',
@@ -291,6 +349,7 @@ class LocalAgentManager {
         );
       }
     } catch (err) {
+      console.warn(`[LocalAgent] ❌ Unexpected error executing query [${requestId}]:`, err);
       ws.send(
         JSON.stringify({
           type: 'QUERY_RESULT',
