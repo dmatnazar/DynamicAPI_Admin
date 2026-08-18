@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Building2, MapPin, Phone, Mail, User, Pencil } from 'lucide-react';
+import { Building2, MapPin, Phone, Mail, User, Pencil, Power, PowerOff } from 'lucide-react';
 import type { TenantConfig, TenantConnection } from '../../types/endpoint.types';
 import { useEndpointStore } from '../../store/useEndpointStore';
 import { useStaffStore } from '../../store/useStaffStore';
@@ -18,7 +18,7 @@ interface Props {
 }
 
 export function TenantConnectionsPanel({ tenant, onEditCompany }: Props) {
-  const { addConnection, updateConnection, removeConnection, setPrimaryConnection, removeTenant } =
+  const { addConnection, updateConnection, removeConnection, setPrimaryConnection, removeTenant, toggleTenantActive } =
     useTenantStore();
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -118,12 +118,42 @@ export function TenantConnectionsPanel({ tenant, onEditCompany }: Props) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Building2 size={16} className="text-blue-400 shrink-0" />
-              <h2 className="text-base font-semibold text-neutral-100 truncate">{tenant.name}</h2>
+              <Building2 size={16} className={tenant.isActive === false ? 'text-neutral-500' : 'text-blue-400 shrink-0'} />
+              <h2
+                className={`text-base font-semibold truncate ${
+                  tenant.isActive === false ? 'text-neutral-400' : 'text-neutral-100'
+                }`}
+              >
+                {tenant.name}
+              </h2>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                  tenant.isActive === false
+                    ? 'bg-neutral-700/60 text-neutral-400'
+                    : 'bg-emerald-500/15 text-emerald-400'
+                }`}
+              >
+                {tenant.isActive === false ? 'Passiw' : 'Aktiw'}
+              </span>
             </div>
             <p className="text-xs font-mono text-neutral-500 mt-0.5">/{tenant.slug}</p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleTenantActive(tenant.id);
+              }}
+              className={`p-1 rounded-md transition-colors ${
+                tenant.isActive === false
+                  ? 'text-neutral-500 hover:text-neutral-300 hover:bg-surface-raised'
+                  : 'text-emerald-400 hover:text-emerald-300 hover:bg-surface-raised'
+              }`}
+              title={tenant.isActive === false ? 'Passiw' : 'Aktiw'}
+            >
+              {tenant.isActive === false ? <PowerOff size={15} /> : <Power size={15} />}
+            </button>
             {onEditCompany && (
               <Button variant="ghost" className="!text-xs" onClick={onEditCompany}>
                 <Pencil size={13} className="inline mr-1" />

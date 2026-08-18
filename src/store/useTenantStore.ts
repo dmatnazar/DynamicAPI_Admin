@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { enqueueChange } from '../lib/syncEngine';
-import type { TenantConfig, TenantConnection, CompanyFormInput } from '../types/endpoint.types';
+import type { TenantConfig, TenantConnection, CompanyFormInput, CompanyProfile } from '../types/endpoint.types';
 import { buildMssqlConnectionString } from '../types/endpoint.types';
 import uuid from '../lib/uuid';
 
@@ -12,6 +12,8 @@ interface TenantStore {
   setTenants: (tenants: TenantConfig[]) => void;
   addTenant: (tenant: TenantConfig) => void;
   updateTenant: (id: string, patch: Partial<TenantConfig>) => void;
+  /** Toggle a company's isActive flag (active ↔ passive) and persist. */
+  toggleTenantActive: (id: string) => void;
   removeTenant: (id: string) => void;
   setActiveTenant: (id: string | null) => void;
   addConnection: (tenantId: string, connection: TenantConnection) => void;
@@ -20,6 +22,26 @@ interface TenantStore {
   setPrimaryConnection: (tenantId: string, connectionId: string) => void;
   /** Build full TenantConfig from form input and persist */
   createFromForm: (input: CompanyFormInput) => Promise<TenantConfig>;
+  /** Create a minimal company (name + slug only) for onboarding flow */
+  createCompanyBasic: (input: {
+    name: string;
+    slug: string;
+    isActive?: boolean;
+    legalName?: string;
+    taxId?: string;
+    registrationNumber?: string;
+    industry?: string;
+    country?: string;
+    city?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    website?: string;
+    contactPerson?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    notes?: string;
+  }) => Promise<TenantConfig>;
 }
 
 function syncPrimaryMirror(tenant: TenantConfig): TenantConfig {
@@ -107,6 +129,17 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
       void persistCompany({ ...t, ...patch });
       void enqueueChange('tenant', t.slug);
     }
+  },
+
+  toggleTenantActive: (id) => {
+    const t = get().tenants.find((x) => x.id === id);
+    if (!t) return;
+    const next = { ...t, isActive: t.isActive !== false ? false : true };
+    set((s) => ({
+      tenants: s.tenants.map((x) => (x.id === id ? next : x)),
+    }));
+    void persistCompany(next);
+    void enqueueChange('tenant', t.slug);
   },
 
   removeTenant: (id) => {
@@ -220,7 +253,7 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
       id: companyId,
       slug: input.slug,
       name: input.name,
-      isActive: input.isActive !== false, // default active on create
+      isActive: input.isActive !== false,
       legalName: input.legalName,
       taxId: input.taxId,
       registrationNumber: input.registrationNumber,
@@ -238,6 +271,38 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
       dbConnectionString: buildMssqlConnectionString(input),
       connectionStatus: 'unknown',
       connections: [connection],
+      createdAt: now,
+      updatedAt: now,
+    };
+    get().addTenant(tenant);
+    return tenant;
+  },
+
+  createCompanyBasic: async (input) => {
+    const now = new Date().toISOString();
+    const companyId = uuid.uuid();
+    const tenant: TenantConfig = {
+      id: companyId,
+      slug: input.slug,
+      name: input.name,
+      isActive: input.isActive !== false,
+      legalName: input.legalName,
+      taxId: input.taxId,
+      registrationNumber: input.registrationNumber,
+      industry: input.industry,
+      country: input.country,
+      city: input.city,
+      address: input.address,
+      phone: input.phone,
+      email: input.email,
+      website: input.website,
+      contactPerson: input.contactPerson,
+      contactPhone: input.contactPhone,
+      contactEmail: input.contactEmail,
+      notes: input.notes,
+      dbConnectionString: '',
+      connectionStatus: 'unknown',
+      connections: [],
       createdAt: now,
       updatedAt: now,
     };

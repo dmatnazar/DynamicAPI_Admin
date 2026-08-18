@@ -14,6 +14,7 @@ interface Props {
 
 const ROLES: { value: StaffRole; label: string }[] = [
   { value: 'admin', label: 'Admin — doly elýeterlilik' },
+  { value: 'manager', label: 'Manager — kärhana dolandyryjysy' },
   { value: 'editor', label: 'Editor — endpoint üýtgedip bilýär' },
   { value: 'viewer', label: 'Viewer — diňe okamak' },
 ];

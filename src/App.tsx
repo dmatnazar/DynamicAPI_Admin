@@ -21,6 +21,7 @@ import { EndpointsPage } from './pages/Endpoints';
 import { SettingsPage } from './pages/Settings';
 import { DeviceGate } from './components/DeviceGate';
 import { StartupLogin } from './components/Auth/StartupLogin';
+import { CompanyGate } from './components/CompanyGate';
 import { useAuthStore } from './store/useAuthStore';
 import { useDeviceStore } from './store/useDeviceStore';
 import { hydrateStoresFromLocalDb } from './lib/hydrateStores';
@@ -35,12 +36,12 @@ const ALL_NAV: {
   id: Tab;
   label: string;
   icon: typeof LayoutDashboard;
-  allowedRoles: ('admin' | 'editor' | 'viewer')[];
+  allowedRoles: ('admin' | 'editor' | 'manager' | 'viewer')[];
 }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['admin', 'editor', 'viewer'] },
-  { id: 'tenants', label: 'Companies', icon: Building2, allowedRoles: ['admin', 'editor'] },
-  { id: 'staff', label: 'Işgärler', icon: Users, allowedRoles: ['admin'] },
-  { id: 'endpoints', label: 'API Builder', icon: Network, allowedRoles: ['admin', 'editor'] },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['admin', 'editor', 'manager', 'viewer'] },
+  { id: 'tenants', label: 'Companies', icon: Building2, allowedRoles: ['admin', 'editor', 'manager'] },
+  { id: 'staff', label: 'Işgärler', icon: Users, allowedRoles: ['admin', 'manager'] },
+  { id: 'endpoints', label: 'API Builder', icon: Network, allowedRoles: ['admin', 'editor', 'manager'] },
   { id: 'settings', label: 'Settings', icon: SettingsIcon, allowedRoles: ['admin'] },
 ];
 
@@ -48,7 +49,8 @@ const COLLAPSE_BREAKPOINT = 860;
 
 export default function App() {
   const { user, isAuthenticated, logout } = useAuthStore();
-  const { profile } = useDeviceStore();
+  const { profile, checkPermission, subscribeToDeviceStatus } = useDeviceStore();
+  const { tenants, activeTenantId } = useTenantStore();
   const [tab, setTab] = useState<Tab>('dashboard');
   const [collapsed, setCollapsed] = useState(window.innerWidth < COLLAPSE_BREAKPOINT);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -59,6 +61,38 @@ export default function App() {
       startAutoSync();
     })();
   }, []);
+
+  // Background device permission polling — 5min when authenticated + approved
+  useEffect(() => {
+    if (!isAuthenticated || !profile || profile.status !== 'approved') return;
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let backoff = 300000;
+    const check = async () => {
+      try {
+        await checkPermission();
+        backoff = 300000;
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        if (msg.includes('429') || msg.includes('Rate limit')) {
+          backoff = Math.min(backoff * 2, 600000);
+        }
+      }
+    };
+
+    timer = setInterval(check, backoff);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isAuthenticated, profile?.status, checkPermission]);
+
+  // Restart permission polling when store notifies of a status change
+  useEffect(() => {
+    return subscribeToDeviceStatus(() => {
+      // The dependency effect above will re-evaluate its conditions
+      // when profile/status changes trigger a re-render.
+    });
+  }, [subscribeToDeviceStatus]);
 
   // Filter navigation tabs based on user role
   const allowedNav = useMemo(() => {
@@ -112,6 +146,31 @@ export default function App() {
     setMobileNavOpen(false);
   };
 
+  const deviceCompanyId = useMemo(() => {
+    if (!profile?.tenantSlug) return null;
+    const t = useTenantStore.getState().tenants.find((x) => x.slug === profile.tenantSlug);
+    return t?.id || null;
+  }, [profile?.tenantSlug]);
+
+  const isNewCompany = useMemo(() => {
+    if (profile?.status !== 'approved' || !profile?.tenantSlug) return false;
+    return !tenants.some((t) => t.slug === profile.tenantSlug);
+  }, [profile?.status, profile?.tenantSlug, tenants]);
+
+  const needsCompanyGate = useMemo(() => {
+    const result = !user || !isAuthenticated
+      ? false
+      : user.role === 'admin'
+        ? false
+        : tenants.length === 0
+          ? false
+          : deviceCompanyId && tenants.some((t) => t.id === deviceCompanyId)
+            ? false
+            : !activeTenantId || isNewCompany;
+    console.log('[App] needsCompanyGate', { user: user?.username, isAuthenticated, role: user?.role, tenantsCount: tenants.length, activeTenantId, deviceCompanyId, isNewCompany, result });
+    return result;
+  }, [user, isAuthenticated, deviceCompanyId, tenants, activeTenantId, isNewCompany]);
+
   return (
     <DeviceGate>
       {!isAuthenticated || !user ? (
@@ -120,6 +179,8 @@ export default function App() {
           <StartupLogin />
           <ToastHost />
         </div>
+      ) : needsCompanyGate ? (
+        <CompanyGate user={user} deviceCompanyId={deviceCompanyId} isNewCompany={isNewCompany} />
       ) : (
         <div className="flex flex-col h-screen bg-surface text-neutral-100 overflow-hidden">
           <TitleBar />
@@ -195,6 +256,10 @@ export default function App() {
                           <span className="inline-flex items-center gap-0.5 text-amber-400 font-medium">
                             <Shield size={10} /> Admin
                           </span>
+                        ) : user.role === 'manager' ? (
+                          <span className="inline-flex items-center gap-0.5 text-purple-400 font-medium">
+                            <Shield size={10} /> Manager
+                          </span>
                         ) : user.role === 'editor' ? (
                           <span className="inline-flex items-center gap-0.5 text-blue-400 font-medium">
                             <Edit3 size={10} /> Redaktor
@@ -239,7 +304,7 @@ export default function App() {
             <main className="flex-1 min-w-0 overflow-y-auto">
               {tab === 'dashboard' && <DashboardPage />}
               {tab === 'tenants' && user.role !== 'viewer' && <TenantsPage />}
-              {tab === 'staff' && user.role === 'admin' && <StaffPage />}
+              {tab === 'staff' && (user.role === 'admin' || user.role === 'manager') && <StaffPage />}
               {tab === 'endpoints' && user.role !== 'viewer' && <EndpointsPage />}
               {tab === 'settings' && user.role === 'admin' && <SettingsPage />}
             </main>

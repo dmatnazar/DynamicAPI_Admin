@@ -12,6 +12,8 @@ interface Props {
   initial?: TenantConfig;
   /** When true, no outer card chrome (used inside Modal) */
   embedded?: boolean;
+  /** Quick create mode — only name and slug, no connection fields */
+  quick?: boolean;
   onCreate?: (input: CompanyFormInput) => void | Promise<void>;
   onUpdate?: (patch: Partial<TenantConfig>) => void;
   onCancel?: () => void;
@@ -50,6 +52,7 @@ export function TenantForm({
   mode = 'create',
   initial,
   embedded,
+  quick,
   onCreate,
   onUpdate,
   onCancel,
@@ -118,7 +121,7 @@ export function TenantForm({
 
   const canSubmitProfile = form.name.trim() && form.slug.trim();
   const canSubmitCreate =
-    canSubmitProfile && form.host.trim() && form.database.trim() && form.username.trim();
+    canSubmitProfile && (quick || (form.host.trim() && form.database.trim() && form.username.trim()));
 
   const [testMsg, setTestMsg] = useState('');
   const testConnection = async () => {
@@ -305,7 +308,7 @@ export function TenantForm({
         </label>
       </section>
 
-      {!isEdit && (
+      {!isEdit && !quick && (
         <section className="space-y-3 rounded-lg border border-surface-border bg-surface-card/50 p-3 sm:p-4">
           <div className="flex items-center gap-2">
             <Database size={14} className="text-emerald-400" />
@@ -414,7 +417,7 @@ export function TenantForm({
           disabled={isEdit ? !canSubmitProfile || saving : !canSubmitCreate || saving}
           className="!text-xs"
         >
-          {saving ? 'Saklanýar…' : isEdit ? 'Üýtgeşmeleri sakla' : 'Kompaniýany goş'}
+          {saving ? 'Saklanýar…' : isEdit ? 'Üýtgeşmeleri sakla' : quick ? 'Indi' : 'Kompaniýany goş'}
         </Button>
       </div>
     </div>

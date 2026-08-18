@@ -2,10 +2,12 @@
  * Central sync engine: full sync + persistent offline queue.
  * Runs on startup, on interval, and after every local change.
  */
-import { syncToVps, syncStaffToVps, checkGatewayHealth, fetchCatalogFromVps, deactivateTenantOnVps, deleteTenantOnVps } from './api';
+import { syncToVps, syncStaffToVps, checkGatewayHealth, fetchCatalogFromVps, deactivateTenantOnVps, deleteTenantOnVps, ensureTenantOnVps } from './api';
+import type { TenantConfig } from '../types/endpoint.types';
 import { useTenantStore } from '../store/useTenantStore';
 import { useStaffStore, recentlyDeletedUsernames } from '../store/useStaffStore';
 import { useEndpointStore } from '../store/useEndpointStore';
+import { useDeviceStore } from '../store/useDeviceStore';
 import { toastSuccess, toastError, toastWarning, toastInfo } from '../components/ui/Toast';
 
 export type SyncStatusSnapshot = {
@@ -63,6 +65,24 @@ async function getCreds(): Promise<{ gatewayUrl: string; adminSecret: string } |
   return null;
 }
 
+async function checkDevicePermission(): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    if ((window as any).deviceAPI?.checkPermission) {
+      const res = await (window as any).deviceAPI.checkPermission();
+      if (res.permissionGranted) {
+        useDeviceStore.getState().setDevicePermission({ granted: true, reason: res.reason });
+        return { allowed: true };
+      }
+      const reason = res.reason || res.error || 'unknown';
+      useDeviceStore.getState().setDevicePermission({ granted: false, reason });
+      return { allowed: false, reason };
+    }
+  } catch {
+    // ignore permission check failures and allow sync to proceed
+  }
+  return { allowed: true };
+}
+
 async function refreshMeta() {
   try {
     const meta = await window.dbAPI?.getSyncMeta?.();
@@ -104,8 +124,13 @@ export async function enqueueChange(
   }
 }
 
+/** Tenants eligible to be pushed to the VPS — passive (isActive === false) companies are local-only. */
+export function getActiveTenants(): TenantConfig[] {
+  return useTenantStore.getState().tenants.filter((t) => t.isActive !== false);
+}
+
 async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }): Promise<string[]> {
-  const tenants = useTenantStore.getState().tenants;
+  const tenants = getActiveTenants();
   const allStaff = useStaffStore.getState().staff;
   const syncedUsernames: string[] = [];
 
@@ -119,6 +144,18 @@ async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }):
         !s.passwordHash.endsWith(':0000')
     );
     if (pushable.length === 0) continue;
+
+    // Ensure tenant exists on VPS before syncing staff
+    try {
+      const ensured = await ensureTenantOnVps(creds.gatewayUrl, creds.adminSecret, t);
+      if (!ensured.ok) {
+        toastWarning(`${t.name || t.slug}`, 'Bu kärhana VPS-de döredip bolmady. Staff sync edilmedi.');
+        continue;
+      }
+    } catch (e: any) {
+      toastWarning(`${t.name || t.slug}`, `Kärhana barlag bolmady: ${e?.message || 'Bilinmäýän ýalňyşlyk'}`);
+      continue;
+    }
 
     const payload = [];
     for (const s of pushable) {
@@ -141,22 +178,51 @@ async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }):
         passwordPlain,
       });
     }
-    await syncStaffToVps(creds.gatewayUrl, creds.adminSecret, t.slug, payload);
-    for (const s of pushable) {
-      if (s.active && !syncedUsernames.includes(s.username)) syncedUsernames.push(s.username);
+    try {
+      await syncStaffToVps(creds.gatewayUrl, creds.adminSecret, t.slug, payload);
+      for (const s of pushable) {
+        if (s.active && !syncedUsernames.includes(s.username)) syncedUsernames.push(s.username);
+      }
+    } catch (e: any) {
+      toastWarning(`Sync şowsuz: ${t.name || t.slug}`, e?.message || 'Bilinmäýän ýalňyşlyk');
     }
   }
   return syncedUsernames;
 }
 
 async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string }) {
-  const tenants = useTenantStore.getState().tenants;
+  const tenants = getActiveTenants();
   const byTenant = useEndpointStore.getState().endpointsByTenant;
 
   for (const t of tenants) {
     const endpoints = byTenant[t.id] || [];
-    if (t.connections.length === 0 && endpoints.length === 0) continue;
-    await syncToVps(creds.gatewayUrl, creds.adminSecret, t, endpoints, true);
+    const hasConnection = t.connections.length > 0;
+    if (!hasConnection && endpoints.length === 0) continue;
+    if (!hasConnection) {
+      toastWarning(
+        `${t.name || t.slug}`,
+        'Bu kärhanada database baglanyşygy ýok. Endpointler sync edilmedi.'
+      );
+      continue;
+    }
+
+    // Ensure tenant exists on VPS before syncing endpoints
+    try {
+      const ensured = await ensureTenantOnVps(creds.gatewayUrl, creds.adminSecret, t);
+      if (!ensured.ok) {
+        toastWarning(`${t.name || t.slug}`, 'Bu kärhana VPS-de döredip bolmady. Endpointler sync edilmedi.');
+        continue;
+      }
+    } catch (e: any) {
+      toastWarning(`${t.name || t.slug}`, `Kärhana barlag bolmady: ${e?.message || 'Bilinmäýän ýalňyşlyk'}`);
+      continue;
+    }
+
+    try {
+      await syncToVps(creds.gatewayUrl, creds.adminSecret, t, endpoints, true);
+    } catch (e: any) {
+      toastWarning(`Sync şowsuz: ${t.name || t.slug}`, e?.message || 'Bilinmäýän ýalňyşlyk');
+    }
   }
 }
 
@@ -168,8 +234,11 @@ async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: stri
     const tenants = useTenantStore.getState().tenants;
     const slugToId = new Map(tenants.map((t) => [t.slug, t.id]));
 
-    // 1. Merge Tenants (Companies)
+    // 1. Merge Tenants (Companies) — only ACTIVE tenants are pulled from the VPS catalog.
+    //    Passive VPS tenants are skipped; the local isActive toggle is the source of truth,
+    //    so an existing passive company is never re-activated from the VPS side.
     for (const ct of catalog.tenants || []) {
+      if (ct.isActive === false) continue;
       const existing = tenants.find((t) => t.slug === ct.slug || t.id === ct.id);
       if (existing) {
         let changed = false;
@@ -178,7 +247,12 @@ async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: stri
           patch.name = ct.name;
           changed = true;
         }
-        if (typeof ct.isActive === 'boolean' && ct.isActive !== existing.isActive) {
+        // Preserve local toggle: never re-activate a locally-passive company from the VPS.
+        if (
+          typeof ct.isActive === 'boolean' &&
+          ct.isActive !== existing.isActive &&
+          existing.isActive !== false
+        ) {
           patch.isActive = ct.isActive;
           changed = true;
         }
@@ -196,7 +270,7 @@ async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: stri
           });
         }
       } else {
-        // Include passive companies so they remain visible in admin UI
+        // Active VPS tenant with no local match → create it locally.
         const newCompany = {
           id: ct.id || `co-${Date.now()}`,
           slug: ct.slug,
@@ -354,6 +428,15 @@ export async function processQueue(opts?: { forceFull?: boolean }): Promise<{
       return { ok: false, message: msg };
     }
 
+    const perm = await checkDevicePermission();
+    if (!perm.allowed) {
+      const msg = `Enjamyň rugsaty ýok (${perm.reason || 'blocked'}) — sinhronizasiýa togtadyldy`;
+      await window.dbAPI?.updateSyncMeta?.({ lastError: msg, lastAttemptAt: now });
+      emit({ online: false, lastError: msg, lastAttemptAt: now });
+      toastWarning('Enjam rugsady', 'Enjamyň girişi gadagan. Administrator bilen habarlaşyň.');
+      return { ok: false, message: msg };
+    }
+
     const online = await checkGatewayHealth(creds.gatewayUrl);
     emit({ online });
     if (!online) {
@@ -415,7 +498,8 @@ export async function processQueue(opts?: { forceFull?: boolean }): Promise<{
           } else if (item.type === 'endpoints' || item.type === 'tenant') {
             if (item.tenantSlug) {
               const t = useTenantStore.getState().tenants.find((x) => x.slug === item.tenantSlug);
-              if (t) {
+              // Passive tenants are local-only — never push them to the VPS.
+              if (t && t.isActive !== false) {
                 const endpoints =
                   useEndpointStore.getState().endpointsByTenant[t.id] || [];
                 await syncToVps(creds.gatewayUrl, creds.adminSecret, t, endpoints, true);

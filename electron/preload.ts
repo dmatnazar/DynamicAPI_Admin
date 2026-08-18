@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('staffAPI', {
     ipcRenderer.invoke('staff:verifyPassword', plain, stored),
   encryptSecret: (plain: string) => ipcRenderer.invoke('staff:encryptSecret', plain),
   decryptSecret: (enc: string) => ipcRenderer.invoke('staff:decryptSecret', enc),
+  verifyAdminPassword: (password: string) =>
+    ipcRenderer.invoke('staff:verifyAdminPassword', password),
 });
 
 contextBridge.exposeInMainWorld('updaterAPI', {
@@ -130,6 +132,8 @@ contextBridge.exposeInMainWorld('deviceAPI', {
   getProfile: () => ipcRenderer.invoke('device:getProfile'),
   register: () => ipcRenderer.invoke('device:register'),
   checkStatus: () => ipcRenderer.invoke('device:checkStatus'),
+  checkPermission: () => ipcRenderer.invoke('device:checkPermission'),
+  requestPermission: () => ipcRenderer.invoke('device:requestPermission'),
   saveProfile: (patch: unknown) => ipcRenderer.invoke('device:saveProfile', patch),
 });
 

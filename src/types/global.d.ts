@@ -15,6 +15,7 @@ declare global {
       encryptSecret: (plain: string) => Promise<string>;
       decryptSecret: (enc: string) => Promise<string>;
       verifyPassword: (plain: string, stored: string) => Promise<boolean>;
+      verifyAdminPassword: (password: string) => Promise<{ ok: boolean }>;
     };
     updaterAPI: {
       check: () => Promise<{ ok?: boolean; version?: string; message?: string } | unknown>;

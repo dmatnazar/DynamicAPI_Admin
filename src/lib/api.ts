@@ -323,4 +323,31 @@ export async function updateTenantOnVps(
   return signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-update', payload as any);
 }
 
+/** Ensure tenant exists on VPS — creates it if missing */
+export async function ensureTenantOnVps(
+  gatewayUrl: string,
+  adminSecret: string,
+  tenant: { id: string; slug: string; name: string }
+): Promise<{ ok: boolean; created: boolean; status: number; body: any }> {
+  try {
+    const check = await signedPost(gatewayUrl, adminSecret, '/api/admin/catalog', {});
+    if (check.ok && check.body) {
+      const exists = (check.body.tenants || []).some(
+        (t: any) => t.slug === tenant.slug || t.id === tenant.id
+      );
+      if (exists) {
+        return { ok: true, created: false, status: 200, body: null };
+      }
+    }
+  } catch {
+    // ignore catalog check failure, try to create anyway
+  }
+
+  const res = await signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-create', {
+    slug: tenant.slug,
+    name: tenant.name,
+  });
+  return { ok: res.ok, created: res.ok && res.status === 200, status: res.status, body: res.body };
+}
+
 

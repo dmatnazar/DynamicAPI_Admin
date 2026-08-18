@@ -9,7 +9,7 @@ import uuid from '../../lib/uuid';
 
 interface Props {
   open: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   initial?: TenantConnection | null;
   onSave: (conn: TenantConnection) => void;
 }
@@ -166,7 +166,7 @@ export function ConnectionFormModal({ open, onClose, initial, onSave }: Props) {
       }),
     };
     onSave(conn);
-    onClose();
+    onClose?.();
   };
 
   const inputCls =

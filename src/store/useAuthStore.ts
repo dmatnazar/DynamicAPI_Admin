@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ElectronUserRole = 'admin' | 'editor' | 'viewer';
+export type ElectronUserRole = 'viewer' | 'editor' | 'manager' | 'admin';
 
 export interface ElectronSessionUser {
   id: string;

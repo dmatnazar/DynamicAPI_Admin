@@ -12,6 +12,8 @@ import {
   saveDeviceProfile,
   registerDeviceWithGateway,
   checkDeviceStatusWithGateway,
+  checkDevicePermission,
+  nodeFetch,
 } from './deviceFingerprint';
 
 app.disableHardwareAcceleration();
@@ -252,6 +254,13 @@ ipcMain.handle('staff:decryptSecret', (_e, enc: string) => {
   }
 });
 
+ipcMain.handle('staff:verifyAdminPassword', (_e, password: string) => {
+  const settings = localDb.getSettings();
+  const adminSecret = localDb.decryptSecret(settings.adminSecretEnc || '');
+  if (!adminSecret) return { ok: false };
+  return { ok: password === adminSecret };
+});
+
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
 // App unlock password (scrypt hash in vault key appLockPasswordHash)
@@ -287,7 +296,10 @@ ipcMain.handle('appLock:clearPassword', () => {
 ipcMain.handle('appLock:verify', (_e, plain: string) => {
   const vault = readVault();
   const enc = vault['appLockPasswordHash'];
-  if (!enc) return true;
+  if (!enc) {
+    // Default password is admin1001 when no custom password is set
+    return plain === 'admin1001';
+  }
   let stored = '';
   try {
     if (safeStorage.isEncryptionAvailable()) {
@@ -375,10 +387,26 @@ ipcMain.handle('device:register', async () => {
   return registerDeviceWithGateway(settings.gatewayUrl, secret);
 });
 
+ipcMain.handle('device:requestPermission', async () => {
+  const settings = localDb.getSettings();
+  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
+  const result = await checkDeviceStatusWithGateway(settings.gatewayUrl, secret);
+  if (result.ok && result.permissionGranted) {
+    return { ok: true };
+  }
+  return { ok: false, error: result.error || 'Permission not granted' };
+});
+
 ipcMain.handle('device:checkStatus', async () => {
   const settings = localDb.getSettings();
   const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
   return checkDeviceStatusWithGateway(settings.gatewayUrl, secret);
+});
+
+ipcMain.handle('device:checkPermission', async () => {
+  const settings = localDb.getSettings();
+  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
+  return checkDevicePermission(settings.gatewayUrl, secret);
 });
 
 // ── Staff Login / Authentication Handlers ───────────────────────────────
@@ -389,11 +417,77 @@ ipcMain.handle('auth:loginStaff', async (_e, credentials: { username: string; pa
     return { ok: false, error: 'Ulanyjy ady we parol gerek' };
   }
 
+  const settings = localDb.getSettings();
+  const gatewayUrl = settings.gatewayUrl;
+  const adminSecret = localDb.decryptSecret(settings.adminSecretEnc || '');
+
+  // ── STEP 1: Try VPS Gateway first (source of truth) ──────────────────
+  if (gatewayUrl && adminSecret) {
+    try {
+      const qs = new URLSearchParams({ username: username.trim(), password }).toString();
+      const url = `${gatewayUrl.replace(/\/$/, '')}/api/auth/verify?${qs}`;
+      const sig = crypto.createHmac('sha256', adminSecret).update(JSON.stringify({ username: username.trim(), password })).digest('hex');
+      console.log('[auth] trying VPS verify', { url: url.replace(/\?.*/, '?...'), username: username.trim() });
+      const res = await nodeFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Signature': sig,
+        },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+      console.log('[auth] VPS verify response', { status: res.status, ok: res.ok });
+
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        console.log('[auth] VPS verify data', data);
+        if (data.ok && data.user) {
+          const u = data.user;
+          const isAdmin = u.role === 'admin';
+          const primaryTenantId = u.tenantId || u.tenantSlug || (isAdmin ? 'master' : undefined);
+          const company = (localDb.exportSnapshot().companies || []).find((c: any) => c.id === primaryTenantId);
+          console.log('[auth] VPS login success', u.username, 'role:', u.role, 'tenantId:', primaryTenantId);
+          return {
+            ok: true,
+            user: {
+              id: u.id,
+              username: u.username,
+              fullName: u.fullName,
+              role: u.role || 'viewer',
+              companyId: primaryTenantId,
+              companySlug: company?.slug || u.tenantSlug || (isAdmin ? '' : undefined),
+              companyName: company?.name || u.tenantName || (isAdmin ? 'Hemme Firmalar' : undefined),
+              isSuperAdmin: isAdmin,
+            },
+          };
+        }
+      }
+
+      if (res.status === 401) {
+        console.log('[auth] VPS verify: invalid password');
+        return { ok: false, error: 'Ulanyjy ady ýa-da parol nädogry' };
+      }
+      if (res.status === 404) {
+        console.log('[auth] VPS verify: user not found');
+        return { ok: false, error: 'Ulanyjy tapylmady' };
+      }
+      if (res.status === 403) {
+        const data = (await res.json()) as any;
+        console.log('[auth] VPS verify: forbidden', data);
+        return { ok: false, error: data.message || 'Bu hasap üçin giriş gadagan' };
+      }
+      console.log('[auth] VPS verify: unexpected response', res.status);
+    } catch (err: any) {
+      console.log('[auth] VPS login failed, falling back to local:', err?.message);
+      // Fall through to local DB fallback
+    }
+  }
+
+  // ── STEP 2: Fallback to local DB (offline mode) ──────────────────────
   const snapshot = localDb.exportSnapshot();
   const staffList = snapshot.staff || [];
   const companies = snapshot.companies || [];
 
-  // Match by username (case-insensitive)
   const member = staffList.find((s) => s.username.toLowerCase() === username.trim().toLowerCase());
 
   if (member) {
@@ -401,26 +495,40 @@ ipcMain.handle('auth:loginStaff', async (_e, credentials: { username: string; pa
       return { ok: false, error: 'Bu ulanyjy işjeň däl (deactivated). Administrator bilen habarlaşyň.' };
     }
 
-    // Verify password
     let passwordMatches = false;
-    if (member.passwordHash && member.passwordHash.includes(':')) {
-      const [salt, hash] = member.passwordHash.split(':');
-      if (salt && hash) {
-        const candidate = crypto.scryptSync(password, salt, 64).toString('hex');
-        const a = Buffer.from(hash, 'hex');
-        const b = Buffer.from(candidate, 'hex');
-        passwordMatches = a.length === b.length && crypto.timingSafeEqual(a, b);
+    const isPlaceholder =
+      !member.passwordHash ||
+      member.passwordHash.startsWith('synced-from-bi') ||
+      member.passwordHash.startsWith('pending-reset') ||
+      member.passwordHash.endsWith(':0000');
+
+    if (!isPlaceholder) {
+      if (member.passwordHash && member.passwordHash.includes(':')) {
+        const [salt, hash] = member.passwordHash.split(':');
+        if (salt && hash) {
+          try {
+            const candidate = crypto.scryptSync(password, salt, 64).toString('hex');
+            const a = Buffer.from(hash, 'hex');
+            const b = Buffer.from(candidate, 'hex');
+            passwordMatches = a.length === b.length && crypto.timingSafeEqual(a, b);
+          } catch {
+            passwordMatches = false;
+          }
+        }
+      } else if (member.passwordHash) {
+        passwordMatches = member.passwordHash === password;
       }
-    } else {
-      // Plain / legacy fallback
-      passwordMatches = member.passwordHash === password;
     }
 
     if (!passwordMatches) {
+      console.log('[auth] local password mismatch for', member.username, 'hash prefix:', member.passwordHash?.slice(0, 20));
       return { ok: false, error: 'Parol nädogry' };
     }
 
-    const company = companies.find((c) => c.id === member.companyId);
+    const isAdmin = member.role === 'admin';
+    const primaryTenantId = (member.tenantIds || [])[0];
+    const company = companies.find((c) => c.id === primaryTenantId);
+    console.log('[auth] local login success', member.username, 'role:', member.role, 'tenantId:', primaryTenantId, 'company:', company?.slug);
     return {
       ok: true,
       user: {
@@ -428,17 +536,15 @@ ipcMain.handle('auth:loginStaff', async (_e, credentials: { username: string; pa
         username: member.username,
         fullName: member.fullName,
         role: member.role || 'viewer',
-        companyId: member.companyId,
-        companySlug: company?.slug || '',
-        companyName: company?.name || '',
+        companyId: primaryTenantId || (isAdmin ? 'master' : undefined),
+        companySlug: company?.slug || (isAdmin ? '' : undefined),
+        companyName: company?.name || (isAdmin ? 'Hemme Firmalar' : undefined),
+        isSuperAdmin: isAdmin,
       },
     };
   }
 
-  // Fallback: Check if device / local DB has no staff yet or master admin login
-  const settings = localDb.getSettings();
-  const adminSecret = localDb.decryptSecret(settings.adminSecretEnc || '');
-
+  // ── STEP 3: Master admin fallback ────────────────────────────────────
   if (username.trim().toLowerCase() === 'admin') {
     if (adminSecret && password === adminSecret) {
       return {
@@ -448,6 +554,9 @@ ipcMain.handle('auth:loginStaff', async (_e, credentials: { username: string; pa
           username: 'admin',
           fullName: 'Ulgam Dolandyryjysy (Admin)',
           role: 'admin',
+          companyId: 'master',
+          companySlug: '',
+          companyName: 'Hemme Firmalar',
           isSuperAdmin: true,
         },
       };

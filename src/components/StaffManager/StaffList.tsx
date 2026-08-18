@@ -13,6 +13,7 @@ interface Props {
 
 const ROLE_LABEL: Record<StaffMember['role'], string> = {
   admin: 'Admin',
+  manager: 'Manager',
   editor: 'Editor',
   viewer: 'Viewer',
 };

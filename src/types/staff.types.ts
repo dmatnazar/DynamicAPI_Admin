@@ -1,4 +1,4 @@
-export type StaffRole = 'admin' | 'editor' | 'viewer';
+export type StaffRole = 'viewer' | 'editor' | 'manager' | 'admin';
 
 export interface StaffMember {
   id: string;

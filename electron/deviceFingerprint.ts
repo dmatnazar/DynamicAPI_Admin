@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
+import http from 'node:http';
+import https from 'node:https';
 
 export interface DeviceProfile {
   id: string;
@@ -20,6 +22,52 @@ export interface DeviceProfile {
   tenantSlug?: string;
   companyName?: string;
   appVersion: string;
+}
+
+export function nodeFetch(url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const transport = parsed.protocol === 'https:' ? https : http;
+
+    const req = transport.request(
+      url,
+      {
+        method: init.method,
+        headers: init.headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => chunks.push(chunk as Buffer));
+        res.on('end', () => {
+          const body = Buffer.concat(chunks).toString('utf-8');
+          resolve({
+            ok: res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode || 0,
+            text: async () => body,
+            json: async () => JSON.parse(body),
+          });
+        });
+      }
+    );
+
+    req.on('error', (err) => reject(err));
+
+    if (init.signal) {
+      init.signal.addEventListener(
+        'abort',
+        () => {
+          req.destroy();
+          reject(new Error('Aborted'));
+        },
+        { once: true }
+      );
+    }
+
+    if (init.body) {
+      req.write(init.body);
+    }
+    req.end();
+  });
 }
 
 function getPrimaryMacAndIp(): { mac: string; ip: string } {
@@ -142,7 +190,7 @@ export async function registerDeviceWithGateway(
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(url, {
+    const res = await nodeFetch(url, {
       method: 'POST',
       headers,
       body: bodyStr,
@@ -151,7 +199,16 @@ export async function registerDeviceWithGateway(
     clearTimeout(timeout);
 
     if (!res.ok) {
-      return { ok: false, error: `VPS Gateway error (${res.status})` };
+      let respBody: any = {};
+      try {
+        const text = await res.text();
+        try { respBody = JSON.parse(text); } catch { respBody = { raw: text.slice(0, 200) }; }
+      } catch { /* ignore */ }
+      return {
+        ok: false,
+        error: `VPS Gateway error (${res.status}): ${respBody.error || respBody.raw}`,
+        debug: { url, status: res.status, body: respBody },
+      };
     }
 
     const data = (await res.json()) as any;
@@ -165,7 +222,7 @@ export async function registerDeviceWithGateway(
 
     return { ok: true, profile: updated };
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady' };
+    return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady', debug: { url } };
   }
 }
 
@@ -184,14 +241,14 @@ export async function checkDeviceStatusWithGateway(
   const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/devices/status?${qs}`;
   const headers: Record<string, string> = {};
   if (adminSecret) {
-    const sig = crypto.createHmac('sha256', adminSecret).update(qs).digest('hex');
+    const sig = crypto.createHmac('sha256', adminSecret).update('{}').digest('hex');
     headers['x-admin-signature'] = sig;
   }
 
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(url, {
+    const res = await nodeFetch(url, {
       method: 'GET',
       headers,
       signal: controller.signal,
@@ -200,7 +257,6 @@ export async function checkDeviceStatusWithGateway(
 
     if (!res.ok) {
       if (res.status === 404) {
-        // Not found, re-register
         return registerDeviceWithGateway(gatewayUrl, adminSecret);
       }
       return { ok: false, error: `VPS Gateway error (${res.status})` };
@@ -218,5 +274,65 @@ export async function checkDeviceStatusWithGateway(
     return { ok: true, profile: updated };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady' };
+  }
+}
+
+export async function checkDevicePermission(
+  gatewayUrl: string,
+  adminSecret: string
+): Promise<PermissionResult> {
+  const current = loadOrGenerateDeviceProfile();
+  if (!gatewayUrl) return { permissionGranted: false, reason: 'error', error: 'Gateway URL sazlanmadyk' };
+
+  const qs = new URLSearchParams({
+    deviceId: current.id,
+    token: current.token,
+  }).toString();
+
+  const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/devices/status?${qs}`;
+  const headers: Record<string, string> = {};
+  if (adminSecret) {
+    const sig = crypto.createHmac('sha256', adminSecret).update('{}').digest('hex');
+    headers['x-admin-signature'] = sig;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const res = await nodeFetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      if (res.status === 404) {
+        const updated = saveDeviceProfile({ status: 'blocked' });
+        return { permissionGranted: false, reason: 'deleted', profile: updated, error: 'Enjam administrator tarapyndan pozuldy' };
+      }
+      return { permissionGranted: false, reason: 'error', error: `VPS Gateway error (${res.status})` };
+    }
+
+    const data = (await res.json()) as any;
+    const updated = saveDeviceProfile({
+      status: data.status || 'pending',
+      tenantId: data.tenantId || undefined,
+      tenantSlug: data.tenantSlug || undefined,
+      companyName: data.companyName || undefined,
+      name: data.name || current.name,
+    });
+
+    if (data.status === 'blocked') {
+      return { permissionGranted: false, reason: 'blocked', profile: updated };
+    }
+
+    if (data.status === 'approved') {
+      return { permissionGranted: true, reason: 'ok', profile: updated };
+    }
+
+    return { permissionGranted: false, reason: 'error', profile: updated, error: `Status: ${data.status}` };
+  } catch (err: any) {
+    return { permissionGranted: false, reason: 'error', error: err?.message || 'VPS Gateway-e birigip bolmady' };
   }
 }
