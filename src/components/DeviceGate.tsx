@@ -10,6 +10,7 @@ import {
   HardDrive,
   Globe,
   ShieldAlert,
+  ShieldCheck,
   Settings,
   Lock,
   Eye,
@@ -17,6 +18,7 @@ import {
   Wifi,
   WifiOff,
   ExternalLink,
+  Building2,
 } from 'lucide-react';
 import { useDeviceStore } from '../store/useDeviceStore';
 
@@ -34,6 +36,7 @@ export function DeviceGate({ children }: Props) {
   const [passwordError, setPasswordError] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
+  const [checkingAssignments, setCheckingAssignments] = useState(false);
 
   // VPS settings state
   const [gatewayUrl, setGatewayUrl] = useState('http://localhost:4000');
@@ -43,6 +46,8 @@ export function DeviceGate({ children }: Props) {
   const [settingsMsg, setSettingsMsg] = useState('');
   const [health, setHealth] = useState<'unknown' | 'checking' | 'online' | 'offline'>('unknown');
   const [rawRegisterError, setRawRegisterError] = useState<string | null>(null);
+
+  const needsReApproval = !!error && /re-approval|rejected|secret changed/i.test(error);
 
   // Load current settings on mount
   useEffect(() => {
@@ -58,20 +63,102 @@ export function DeviceGate({ children }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // Initial registration on mount
+  // NOTE: Electron → VPS uses ONLY profile.deviceSyncSecret (devices.device_sync_secret).
+  // ADMIN_SYNC_SECRET is BI ↔ VPS only — never required in Electron for sync/tunnel.
+  // Optional "local master password" field below is for app unlock / bootstrap only.
+
+  // Initial registration/verification on mount
   useEffect(() => {
     let cancelled = false;
     setRawRegisterError(null);
-    fetchProfile().then((p) => {
-      if (cancelled) return;
-      if (p && p.status === 'approved') {
-        checkStatus();
-        return;
+
+    (async () => {
+      try {
+        console.log('[DeviceGate] Initial mount - fetching profile...');
+        const p = await fetchProfile();
+        if (cancelled) return;
+        console.log('[DeviceGate] Fetched profile:', p);
+
+        if (!p) {
+          console.log('[DeviceGate] No profile found, registering device...');
+          registerDevice();
+          return;
+        }
+
+        console.log('[DeviceGate] Checking device status with VPS...');
+        const statusResult = await checkStatus();
+        if (cancelled) return;
+        console.log('[DeviceGate] Status check result:', statusResult);
+
+        if (!statusResult.ok) {
+          console.log('[DeviceGate] Status check failed, resetting to pending and re-registering...');
+          await (window as any).deviceAPI.saveProfile({ status: 'pending' });
+          const refreshed = await fetchProfile();
+          if (refreshed?.status === 'pending') {
+            registerDevice();
+          }
+          return;
+        }
+
+        const updatedProfile = statusResult.profile || p;
+        console.log('[DeviceGate] Updated profile from VPS:', updatedProfile);
+
+        if (updatedProfile.status === 'approved' && !updatedProfile.deviceSyncSecret) {
+          console.log('[DeviceGate] Approved but missing deviceSyncSecret - needs re-approval');
+          setError('Device secret missing. Re-approval required.');
+          return;
+        }
+
+        console.log('[DeviceGate] Device check complete - status:', updatedProfile.status);
+      } catch (err: any) {
+        console.log('[DeviceGate] Initialization error:', err);
+        if (!cancelled) {
+          setError(err?.message || 'Initialization failed');
+        }
       }
-      registerDevice();
-    });
+    })();
+
     return () => { cancelled = true; };
   }, [fetchProfile, registerDevice, checkStatus]);
+
+  // ⚡ BI-da tassyklananda awtomat geçmek üçin polling (her 3 sekunt)
+  useEffect(() => {
+    if (profile?.status === 'approved') return; // eýýäm tassyklanan
+    if (loading) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const result = await checkStatus();
+        if (cancelled) return;
+        if (result.ok && result.profile) {
+          const newStatus = result.profile.status;
+          console.log('[DeviceGate] Poll status:', newStatus);
+          if (newStatus === 'approved') {
+            // Tassyklanyldy! Awtomat geç
+            if (timer) clearInterval(timer);
+          } else if (newStatus === 'blocked') {
+            // Petiklenen — admin garaşmak penjiresine geç
+            if (timer) clearInterval(timer);
+          }
+        }
+      } catch {
+        /* polling errors ignored */
+      }
+    };
+
+    // Derrew barla, soň her 3 sekuntda
+    void poll();
+    timer = setInterval(poll, 3000);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [profile?.status, loading, checkStatus]);
 
   // Refresh permission when store notifies of status change
   useEffect(() => {
@@ -87,6 +174,44 @@ export function DeviceGate({ children }: Props) {
       setRawRegisterError(error);
     }
   }, [error]);
+
+  // Mandatory assignment check: after device is approved, ensure company assignments are loaded
+  useEffect(() => {
+    if (profile?.status !== 'approved' || needsReApproval) return;
+    const slugs = profile?.companySlugs || profile?.tenantSlugs || [];
+    if (slugs.length > 0) {
+      setCheckingAssignments(false);
+      return; // assignments already loaded
+    }
+
+    setCheckingAssignments(true);
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const check = async () => {
+      try {
+        const result = await checkStatus();
+        if (cancelled) return;
+        if (result.ok && result.profile) {
+          const newSlugs = result.profile.companySlugs || result.profile.tenantSlugs || [];
+          if (newSlugs.length > 0) {
+            setCheckingAssignments(false);
+          } else {
+            timeoutId = setTimeout(check, 3000);
+          }
+        } else {
+          timeoutId = setTimeout(check, 3000);
+        }
+      } catch {
+        if (!cancelled) timeoutId = setTimeout(check, 3000);
+      }
+    };
+    check();
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      setCheckingAssignments(false);
+    };
+  }, [profile?.status, needsReApproval, profile?.companySlugs, profile?.tenantSlugs, checkStatus]);
 
   const handleCopyId = () => {
     if (!profile?.id) return;
@@ -110,10 +235,10 @@ export function DeviceGate({ children }: Props) {
       const ok = await window.appLockAPI.verify(password);
       if (ok) {
         setSettingsUnlocked(true);
-        // Refresh settings from DB
+        // Load existing settings — do NOT overwrite adminSecret with deviceSyncSecret
         const settings = await window.dbAPI.getSettings();
-        setGatewayUrl(settings.gatewayUrl || 'http://localhost:4000');
-        setAdminSecret(settings.adminSecret || '');
+        if (settings?.gatewayUrl) setGatewayUrl(settings.gatewayUrl);
+        if (settings?.adminSecret) setAdminSecret(settings.adminSecret);
         setHealth('unknown');
       } else {
         setPasswordError('Parol nädogry');
@@ -178,9 +303,43 @@ export function DeviceGate({ children }: Props) {
     );
   }
 
-  // If approved, render the app!
-  if (profile?.status === 'approved') {
+  // If approved and no re-approval needed, render the app!
+  const assignedSlugs = profile?.companySlugs || profile?.tenantSlugs || [];
+  if (profile?.status === 'approved' && !needsReApproval && assignedSlugs.length > 0) {
     return <>{children}</>;
+  }
+
+  // If approved but waiting for company assignments
+  if (profile?.status === 'approved' && !needsReApproval && assignedSlugs.length === 0) {
+    return (
+      <div className="h-screen w-screen bg-[#0A0B0F] flex flex-col items-center justify-center p-6 select-none">
+        <div className="max-w-md w-full bg-surface-raised border border-surface-border rounded-2xl p-8 shadow-2xl text-center space-y-5 animate-in fade-in">
+          <div className="mx-auto h-16 w-16 rounded-2xl bg-amber-950/60 border border-amber-800/60 flex items-center justify-center text-amber-400">
+            <Building2 className="h-8 w-8" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-white tracking-tight">Kärhanalar Baglanyşygy Barlaň</h1>
+            <p className="text-sm text-neutral-400 mt-2">
+              Bu enjam tassyklanyldy, ýöne içine here bir kärhana baglanmady. Administrator bilen habarlaşyň.
+            </p>
+          </div>
+          {checkingAssignments && (
+            <div className="flex items-center justify-center gap-2 text-xs text-neutral-400">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <span>Baglanyşyklar barlanýar...</span>
+            </div>
+          )}
+          <button
+            onClick={() => checkStatus()}
+            disabled={checking}
+            className="w-full py-2.5 px-4 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-semibold text-sm transition-all shadow-lg shadow-primary-950/50 flex items-center justify-center gap-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
+            Täzeden Barlamak
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // If permission denied (blocked or deleted)
@@ -395,7 +554,7 @@ export function DeviceGate({ children }: Props) {
           <p className="font-medium text-slate-300">Göz ýetirmeli zatlar:</p>
           <ul className="list-disc list-inside space-y-0.5 ml-1">
             <li>VPS Gateway işleýärmi? <span className="font-mono">{gatewayUrl}/health</span> sahypasyny browserde açyp barlaň.</li>
-            <li>BI Platform Settings-da şol bir Gateway URL we Admin Secret goýlan bolmaly.</li>
+            <li>BI Platform Settings-da Gateway URL + ADMIN_SYNC_SECRET (BI↔VPS). Electron-da diňe Gateway URL gerek — device secret tassyklananda awtomat gelýär.</li>
             <li>Enjam tassyklanandan soň bu programma awtomatiki açylar.</li>
           </ul>
         </div>
@@ -426,7 +585,7 @@ export function DeviceGate({ children }: Props) {
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && handleVerifyPassword()}
-                          placeholder="Default: admin1001"
+                          placeholder="Parolyňyzy giriziň"
                           className="w-full h-10 rounded-xl border border-surface-border bg-surface-card px-3 pr-10 text-sm text-neutral-100 outline-none focus:ring-2 focus:ring-primary-500/40"
                         />
                         <button
@@ -507,13 +666,14 @@ export function DeviceGate({ children }: Props) {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-neutral-400">Admin Sync Secret</label>
+                      <label className="mb-1 block text-xs font-medium text-neutral-400">Ýerli master parol (islege görä)</label>
+                      <p className="text-[10px] text-neutral-500 mb-1">VPS ADMIN_SYNC_SECRET däl. Sync üçin device_sync_secret ulanylýar (tassyklananda awtomat).</p>
                       <div className="relative">
                         <input
                           type={showSecret ? 'text' : 'password'}
                           value={adminSecret}
                           onChange={(e) => setAdminSecret(e.target.value)}
-                          placeholder="GATEWAY_ADMIN_SECRET"
+                          placeholder="ýerli parol (islege görä)"
                           className="w-full h-10 rounded-xl border border-surface-border bg-surface-card px-3 pr-10 text-sm text-neutral-100 outline-none focus:ring-2 focus:ring-primary-500/40"
                         />
                         <button

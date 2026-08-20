@@ -16,6 +16,7 @@ import {
   Shield,
   KeyRound,
   User,
+  Power,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -38,9 +39,15 @@ export function SettingsPage() {
   const [adminSecret, setAdminSecret] = useState('');
   const [showSecret, setShowSecret] = useState(false);
   const [autoSyncMinutes, setAutoSyncMinutes] = useState(0);
-  const [savedSection, setSavedSection] = useState<'gateway' | 'sync' | 'update' | null>(null);
+  const [savedSection, setSavedSection] = useState<'gateway' | 'sync' | 'update' | 'autostart' | null>(null);
   const [health, setHealth] = useState<'unknown' | 'checking' | 'online' | 'offline'>('unknown');
   const [copiedId, setCopiedId] = useState(false);
+  const [autoLaunch, setAutoLaunch] = useState(false);
+  const [autoLogin, setAutoLogin] = useState(false);
+  const [autoLoginUsername, setAutoLoginUsername] = useState('');
+  const [autoLoginPassword, setAutoLoginPassword] = useState('');
+  const [showAutoPassword, setShowAutoPassword] = useState(false);
+  const [syncEnabled, setSyncEnabled] = useState(false);
 
   // Auto-update structured configuration
   const [upProtocol, setUpProtocol] = useState<'http' | 'https'>('https');
@@ -61,6 +68,11 @@ export function SettingsPage() {
       if (v) setAutoSyncMinutes(Number(v));
       else window.vaultAPI?.get('autoSyncMinutes').then((m: string | null) => m && setAutoSyncMinutes(Number(m)));
     });
+    window.appAPI?.getAutoLaunch?.().then((v: boolean) => setAutoLaunch(v));
+    window.vaultAPI?.get('autoLoginEnabled').then((v: string | null) => setAutoLogin(v === '1'));
+    window.vaultAPI?.get('autoLoginUsername').then((v: string | null) => v && setAutoLoginUsername(v));
+    window.vaultAPI?.get('autoLoginPassword').then((v: string | null) => v && setAutoLoginPassword(v));
+    window.vaultAPI?.get('syncEnabled').then((v: string | null) => setSyncEnabled(v === '1' || v === 'true'));
     window.dbAPI?.getSyncMeta?.().then((m: any) => {
       if (m?.autoSyncIntervalSec) setAutoSyncMinutes(m.autoSyncIntervalSec);
     });
@@ -160,6 +172,39 @@ export function SettingsPage() {
     setTimeout(() => setSavedSection(null), 2000);
   };
 
+  const toggleSync = async () => {
+    const newValue = !syncEnabled;
+    await window.vaultAPI.set('syncEnabled', newValue ? '1' : '0');
+    setSyncEnabled(newValue);
+    if (newValue) {
+      await window.dbAPI?.enqueueSync?.({ type: 'full-sync' });
+      await window.dbAPI?.updateSyncMeta?.({
+        autoSyncIntervalSec: autoSyncMinutes,
+      });
+    }
+    setSavedSection('sync');
+    setTimeout(() => setSavedSection(null), 2000);
+  };
+
+  const saveAutostart = async () => {
+    await window.appAPI?.setAutoLaunch?.(autoLaunch);
+    setSavedSection('autostart');
+    setTimeout(() => setSavedSection(null), 2000);
+  };
+
+  const saveAutoLogin = async () => {
+    await window.vaultAPI.set('autoLoginEnabled', autoLogin ? '1' : '0');
+    if (autoLogin) {
+      await window.vaultAPI.set('autoLoginUsername', autoLoginUsername.trim());
+      await window.vaultAPI.set('autoLoginPassword', autoLoginPassword);
+    } else {
+      await window.vaultAPI.delete('autoLoginUsername');
+      await window.vaultAPI.delete('autoLoginPassword');
+    }
+    setSavedSection('autostart');
+    setTimeout(() => setSavedSection(null), 2000);
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
       {/* Header */}
@@ -239,11 +284,16 @@ export function SettingsPage() {
       </section>
 
       {/* Gateway connection */}
-      <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
+      <section className="rounded-xl border border-indigo-500/20 bg-gradient-to-br from-surface-card to-surface-raised p-4 sm:p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Server size={16} className="text-indigo-400" />
-            <h3 className="text-sm font-semibold text-neutral-100">VPS Gateway Baglanyşygy</h3>
+            <div className="h-8 w-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+              <Server size={16} className="text-indigo-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-100">VPS Gateway Baglanyşygy</h3>
+              <p className="text-[10px] text-neutral-500">Sync we authentication üçin merkezi serwer</p>
+            </div>
           </div>
           {health !== 'unknown' && (
             <Badge
@@ -255,41 +305,59 @@ export function SettingsPage() {
 
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <label className="text-xs text-neutral-400">VPS Gateway URL</label>
-            <input
-              className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm font-mono"
-              value={gatewayUrl}
-              onChange={(e) => setGatewayUrl(e.target.value)}
-              placeholder="https://your-domain.com ýa-da http://216.250.13.39:4000"
-            />
+            <label className="text-xs text-neutral-400 font-medium">VPS Gateway URL</label>
+            <div className="relative">
+              <input
+                className="w-full bg-surface-raised border border-surface-border rounded-lg px-3 py-2.5 text-sm font-mono pl-9 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 transition-all"
+                value={gatewayUrl}
+                onChange={(e) => setGatewayUrl(e.target.value)}
+                placeholder="https://your-domain.com ýa-da http://216.250.13.39:4000"
+              />
+              <Globe className="absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
+              <button
+                type="button"
+                onClick={() => { navigator.clipboard.writeText(gatewayUrl); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 p-1 rounded hover:bg-surface-border/50 transition-colors"
+                title="Göçürmek"
+              >
+                <Copy size={14} />
+              </button>
+            </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-neutral-400">Admin Sync Secret</label>
+            <label className="text-xs text-neutral-400 font-medium">Ýerli master parol (islege görä)</label>
+            <p className="text-[10px] text-neutral-500">BI/VPS ADMIN_SYNC_SECRET däl. Electron sync diňe device_sync_secret bilen işlenýär.</p>
             <div className="relative">
               <input
                 type={showSecret ? 'text' : 'password'}
-                className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 pr-9 text-sm font-mono"
+                className="w-full bg-surface-raised border border-surface-border rounded-lg px-3 py-2.5 pr-10 text-sm font-mono focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 transition-all"
                 value={adminSecret}
                 onChange={(e) => setAdminSecret(e.target.value)}
                 placeholder="VPS .env faýlyndaky ADMIN_SYNC_SECRET"
               />
               <button
                 type="button"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 p-1 rounded hover:bg-surface-border/50 transition-colors"
                 onClick={() => setShowSecret((v) => !v)}
               >
                 {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
+            <p className="text-[10px] text-neutral-500">
+              Bu gizlin söz diňe şu kompýuterde saklanýar we VPS bilen sync üçin ulanylýar.
+            </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <Button variant="secondary" onClick={testHealth} disabled={health === 'checking'}>
-            Statusy Barla
+          <Button variant="secondary" onClick={testHealth} disabled={health === 'checking'} className="gap-1.5">
+            {health === 'checking' ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+            {health === 'checking' ? 'Barlanýar...' : 'Statusy Barla'}
           </Button>
-          <Button onClick={saveGateway}>{savedSection === 'gateway' ? 'Saklandy ✓' : 'Ýatda Sakla'}</Button>
+          <Button onClick={saveGateway} className="gap-1.5">
+            {savedSection === 'gateway' ? <><Check className="h-3.5 w-3.5" /> Saklandy ✓</> : 'Ýatda Sakla'}
+          </Button>
         </div>
       </section>
 
@@ -424,31 +492,135 @@ export function SettingsPage() {
 
       {/* Sync settings */}
       <section className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <RefreshCw size={16} className="text-emerald-400" />
-          <h3 className="text-sm font-semibold text-neutral-100">Awtomatiki Sinhronizasiýa</h3>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <RefreshCw size={16} className="text-emerald-400" />
+            <h3 className="text-sm font-semibold text-neutral-100">Awtomatiki Sinhronizasiýa</h3>
+          </div>
+          <button
+            onClick={toggleSync}
+            className={`h-7 w-11 rounded-full transition-colors relative shrink-0 ${
+              syncEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+            }`}
+          >
+            <span
+              className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform"
+              style={{ left: syncEnabled ? 'calc(100% - 1.625rem)' : '0.125rem' }}
+            />
+          </button>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs text-neutral-400">Sinhronizasiýa wagty</label>
-          <select
-            className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm text-white"
-            value={autoSyncMinutes}
-            onChange={(e) => setAutoSyncMinutes(Number(e.target.value))}
-          >
-            {SYNC_INTERVAL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <p className="text-[11px] text-neutral-500">
-            Offline wagty üýtgeşmeler ýerli SQLite bazasynda saklanýar we internet açylanda awtomatiki sinhronlanýar.
-          </p>
+        {syncEnabled && (
+          <div className="space-y-1.5">
+            <label className="text-xs text-neutral-400">Sinhronizasiýa wagty</label>
+            <select
+              className="w-full bg-surface-raised border border-surface-border rounded-md px-3 py-2 text-sm text-white"
+              value={autoSyncMinutes}
+              onChange={(e) => setAutoSyncMinutes(Number(e.target.value))}
+            >
+              {SYNC_INTERVAL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-neutral-500">
+              Offline wagty üýtgeşmeler ýerli SQLite bazasynda saklanýar we internet açylanda awtomatiki sinhronlanýar.
+            </p>
+          </div>
+        )}
+
+        <div className="flex justify-end pt-1">
+          <Button onClick={saveSync} disabled={!syncEnabled}>
+            {savedSection === 'sync' ? 'Saklandy ✓' : 'Ýatda Sakla'}
+          </Button>
+        </div>
+      </section>
+
+      {/* Autostart + Auto-login */}
+      <section className="rounded-xl border border-surface-border bg-surface-card p-3 sm:p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Power size={14} className="text-amber-400" />
+          <h3 className="text-xs font-semibold text-neutral-100 uppercase tracking-wider">Başlatma we Giriş</h3>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Autostart */}
+          <div className="p-3 rounded-lg bg-surface-raised border border-surface-border space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-neutral-200">Awtomatik Başlatma</p>
+                <p className="text-[10px] text-neutral-500">Windows açylanda</p>
+              </div>
+              <button
+                onClick={() => setAutoLaunch((v) => !v)}
+                className={`h-7 w-11 rounded-full transition-colors relative shrink-0 ${
+                  autoLaunch ? 'bg-emerald-600' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                    autoLaunch ? 'translate-x-5.5 left-0.5' : 'translate-x-0.5 left-0.5'
+                  }`}
+                  style={{ left: autoLaunch ? 'calc(100% - 1.625rem)' : '0.125rem' }}
+                />
+              </button>
+            </div>
+            <p className="text-[10px] text-neutral-500">Tray-da gizli rejimde açylar</p>
+          </div>
+
+          {/* Auto-login */}
+          <div className="p-3 rounded-lg bg-surface-raised border border-surface-border space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-neutral-200">Awtomatik Giriş</p>
+                <p className="text-[10px] text-neutral-500">Restart soň</p>
+              </div>
+              <button
+                onClick={() => setAutoLogin((v) => !v)}
+                className={`h-7 w-11 rounded-full transition-colors relative shrink-0 ${
+                  autoLogin ? 'bg-indigo-600' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform"
+                  style={{ left: autoLogin ? 'calc(100% - 1.625rem)' : '0.125rem' }}
+                />
+              </button>
+            </div>
+            {autoLogin && (
+              <div className="space-y-1.5 pt-1">
+                <input
+                  className="w-full bg-surface-card border border-surface-border rounded px-2 py-1 text-xs text-white"
+                  value={autoLoginUsername}
+                  onChange={(e) => setAutoLoginUsername(e.target.value)}
+                  placeholder="Ulanyjy"
+                />
+                <div className="relative">
+                  <input
+                    type={showAutoPassword ? 'text' : 'password'}
+                    className="w-full bg-surface-card border border-surface-border rounded px-2 py-1 pr-7 text-xs text-white"
+                    value={autoLoginPassword}
+                    onChange={(e) => setAutoLoginPassword(e.target.value)}
+                    placeholder="Parol"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500"
+                    onClick={() => setShowAutoPassword((v) => !v)}
+                  >
+                    {showAutoPassword ? <EyeOff size={12} /> : <Eye size={12} />}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex justify-end pt-1">
-          <Button onClick={saveSync}>{savedSection === 'sync' ? 'Saklandy ✓' : 'Ýatda Sakla'}</Button>
+          <Button size="sm" onClick={saveAutostart}>
+            {savedSection === 'autostart' ? 'Saklandy ✓' : 'Ýatda Sakla'}
+          </Button>
         </div>
       </section>
     </div>

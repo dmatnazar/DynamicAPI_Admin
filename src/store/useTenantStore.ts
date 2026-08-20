@@ -144,11 +144,12 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
 
   removeTenant: (id) => {
     const t = get().tenants.find((x) => x.id === id);
-    // Local remove; VPS hard-delete is handled by caller after dependency checks
-    set((s) => ({
-      tenants: s.tenants.filter((x) => x.id !== id),
-      activeTenantId: s.activeTenantId === id ? null : s.activeTenantId,
-    }));
+    const remaining = get().tenants.filter((x) => x.id !== id);
+    const nextActive =
+      get().activeTenantId === id
+        ? remaining[0]?.id ?? null
+        : get().activeTenantId;
+    set({ tenants: remaining, activeTenantId: nextActive });
     void window.dbAPI?.deleteCompany(id);
     if (t?.slug) void enqueueChange('tenant-delete', t.slug);
     void enqueueChange('full-sync');

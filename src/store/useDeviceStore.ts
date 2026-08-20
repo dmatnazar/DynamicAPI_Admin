@@ -15,7 +15,11 @@ export interface DeviceProfile {
   status: 'pending' | 'approved' | 'blocked' | 'offline';
   tenantId?: string;
   tenantSlug?: string;
+  tenantSlugs?: string[];
   companyName?: string;
+  companyNames?: string[];
+  companySlugs?: string[];
+  deviceSyncSecret?: string;
   appVersion: string;
   isNewCompany?: boolean;
 }
@@ -40,28 +44,68 @@ interface DeviceState {
   setDevicePermission: (permission: { granted: boolean; reason?: string }) => void;
 }
 
-export const useDeviceStore = create<DeviceState>((set, get) => ({
-  profile: null,
-  loading: true,
-  checking: false,
-  error: null,
-  devicePermission: null,
-  statusListeners: new Set(),
-  permissionChecking: false,
-
-  fetchProfile: async () => {
-    try {
-      if ((window as any).deviceAPI?.getProfile) {
-        const p = await (window as any).deviceAPI.getProfile();
-        set({ profile: p, loading: false });
+export const useDeviceStore = create<DeviceState>((set, get) => {
+  if (typeof window !== 'undefined' && (window as any).deviceAPI?.onStatusChanged) {
+    (window as any).deviceAPI.onStatusChanged((profile: DeviceProfile) => {
+      const prev = get().profile?.status;
+      set({ profile, loading: false });
+      if (prev !== profile.status) {
         get().notifyStatusChange();
-        return p;
       }
-    } catch (err: any) {
-      set({ error: err?.message || 'Profile ýüklenmedi', loading: false });
-    }
-    return null;
-  },
+    });
+  }
+
+  // ⚡ Real-time device events from VPS (approved/blocked/deleted)
+  if (typeof window !== 'undefined' && (window as any).deviceAPI?.onEvent) {
+    (window as any).deviceAPI.onEvent((event: { type: string; deviceId: string; status?: string; companySlugs?: string[]; companyNames?: string[] }) => {
+      console.log('[useDeviceStore] Received real-time device event:', event.type);
+      set({ error: null });
+      if (event.type === 'DEVICE_BLOCKED' || event.type === 'DEVICE_DELETED') {
+        const newStatus = event.type === 'DEVICE_BLOCKED' ? 'blocked' : 'blocked';
+        set((s) => ({
+          profile: s.profile ? { ...s.profile, status: newStatus as any } : s.profile,
+          devicePermission: { granted: false, reason: event.type === 'DEVICE_BLOCKED' ? 'blocked' : 'deleted' },
+        }));
+        get().notifyStatusChange();
+      } else if (event.type === 'DEVICE_APPROVED') {
+        set((s) => ({
+          profile: s.profile
+            ? {
+                ...s.profile,
+                status: 'approved',
+                companySlugs: event.companySlugs || s.profile.companySlugs,
+                companyNames: event.companyNames || s.profile.companyNames,
+              }
+            : s.profile,
+          devicePermission: { granted: true, reason: 'ok' },
+        }));
+        get().notifyStatusChange();
+      }
+    });
+  }
+
+  return {
+    profile: null,
+    loading: true,
+    checking: false,
+    error: null,
+    devicePermission: null,
+    statusListeners: new Set(),
+    permissionChecking: false,
+
+    fetchProfile: async () => {
+      try {
+        if ((window as any).deviceAPI?.getProfile) {
+          const p = await (window as any).deviceAPI.getProfile();
+          set({ profile: p, loading: false });
+          get().notifyStatusChange();
+          return p;
+        }
+      } catch (err: any) {
+        set({ error: err?.message || 'Profile ýüklenmedi', loading: false });
+      }
+      return null;
+    },
 
   checkStatus: async () => {
     set({ checking: true, error: null });
@@ -185,4 +229,4 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     set({ devicePermission: permission });
     get().notifyStatusChange();
   },
-}));
+  }});

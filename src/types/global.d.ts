@@ -30,6 +30,8 @@ declare global {
     };
     appAPI: {
       getVersion: () => Promise<string>;
+      getAutoLaunch: () => Promise<boolean>;
+      setAutoLaunch: (enabled: boolean) => Promise<{ ok: boolean; openAtLogin: boolean }>;
     };
     appLockAPI: {
       hasPassword: () => Promise<boolean>;

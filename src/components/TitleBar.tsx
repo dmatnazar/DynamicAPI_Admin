@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RotateCcw, CloudUpload, Loader2, Wifi, WifiOff } from 'lucide-react';
+import { RotateCcw, CloudUpload, Loader2, Wifi, WifiOff, Minus } from 'lucide-react';
 import { manualSync, subscribeSyncStatus, type SyncStatusSnapshot } from '../lib/syncEngine';
 
 function fmtTime(iso?: string) {
@@ -144,6 +144,20 @@ export function TitleBar() {
           className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-neutral-200 hover:bg-surface-card rounded transition"
         >
           <RotateCcw size={13} />
+        </button>
+        <button
+          title="Minimize"
+          onClick={() => window.windowAPI.minimize()}
+          className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-neutral-200 hover:bg-surface-card rounded transition"
+        >
+          <Minus size={13} />
+        </button>
+        <button
+          title="Close to tray"
+          onClick={() => window.windowAPI.hide()}
+          className="h-8 w-9 flex items-center justify-center text-neutral-500 hover:text-rose-300 hover:bg-rose-500/10 rounded transition"
+        >
+          <span className="text-xs font-bold leading-none">×</span>
         </button>
       </div>
     </div>

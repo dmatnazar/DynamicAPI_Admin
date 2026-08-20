@@ -20,7 +20,11 @@ export interface DeviceProfile {
   status: 'pending' | 'approved' | 'blocked' | 'offline';
   tenantId?: string;
   tenantSlug?: string;
+  tenantSlugs?: string[];
   companyName?: string;
+  companyNames?: string[];
+  companySlugs?: string[];
+  deviceSyncSecret?: string;
   appVersion: string;
 }
 
@@ -118,6 +122,10 @@ export function loadOrGenerateDeviceProfile(): DeviceProfile {
     stored.token = crypto.randomBytes(24).toString('hex');
   }
 
+  if (!stored.deviceSyncSecret) {
+    stored.deviceSyncSecret = crypto.randomBytes(32).toString('hex');
+  }
+
   const profile: DeviceProfile = {
     id: stored.id,
     token: stored.token,
@@ -132,7 +140,11 @@ export function loadOrGenerateDeviceProfile(): DeviceProfile {
     status: stored.status || 'pending',
     tenantId: stored.tenantId,
     tenantSlug: stored.tenantSlug,
+    tenantSlugs: stored.tenantSlugs,
     companyName: stored.companyName,
+    companyNames: stored.companyNames,
+    companySlugs: stored.companySlugs,
+    deviceSyncSecret: stored.deviceSyncSecret,
     appVersion,
   };
 
@@ -157,7 +169,7 @@ export function saveDeviceProfile(profile: Partial<DeviceProfile>): DeviceProfil
 
 export async function registerDeviceWithGateway(
   gatewayUrl: string,
-  adminSecret: string
+  _adminSecret?: string
 ): Promise<{ ok: boolean; profile?: DeviceProfile; error?: string }> {
   const current = loadOrGenerateDeviceProfile();
   if (!gatewayUrl) return { ok: false, error: 'Gateway URL sazlanmadyk' };
@@ -175,17 +187,13 @@ export async function registerDeviceWithGateway(
     macAddress: current.macAddress,
     ipAddress: current.ipAddress,
     appVersion: current.appVersion,
+    deviceSyncSecret: current.deviceSyncSecret,
   };
 
   const bodyStr = JSON.stringify(body);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-
-  if (adminSecret) {
-    const sig = crypto.createHmac('sha256', adminSecret).update(bodyStr).digest('hex');
-    headers['x-admin-signature'] = sig;
-  }
 
   try {
     const controller = new AbortController();
@@ -211,128 +219,172 @@ export async function registerDeviceWithGateway(
       };
     }
 
-    const data = (await res.json()) as any;
-    const updated = saveDeviceProfile({
-      status: data.status || 'pending',
-      tenantId: data.tenantId || undefined,
-      tenantSlug: data.tenantSlug || undefined,
-      companyName: data.companyName || undefined,
-      name: data.name || current.name,
-    });
+     const data = (await res.json()) as any;
+     const updated = saveDeviceProfile({
+       status: data.status || 'pending',
+       tenantId: data.tenantId || undefined,
+       tenantSlug: data.tenantSlug || undefined,
+       tenantSlugs: data.tenantSlugs || data.companySlugs || undefined,
+       companyName: data.companyName || undefined,
+       companyNames: data.companyNames || undefined,
+       companySlugs: data.companySlugs || data.tenantSlugs || undefined,
+       deviceSyncSecret: data.deviceSyncSecret || current.deviceSyncSecret || undefined,
+       name: data.name || current.name,
+     });
 
-    return { ok: true, profile: updated };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady', debug: { url } };
-  }
-}
+     return { ok: true, profile: updated };
+   } catch (err: any) {
+     return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady', debug: { url } };
+   }
+ }
 
-export async function checkDeviceStatusWithGateway(
-  gatewayUrl: string,
-  adminSecret: string
-): Promise<{ ok: boolean; profile?: DeviceProfile; error?: string }> {
-  const current = loadOrGenerateDeviceProfile();
-  if (!gatewayUrl) return { ok: false, error: 'Gateway URL sazlanmadyk' };
+  export async function checkDeviceStatusWithGateway(
+    gatewayUrl: string,
+    _adminSecret?: string,
+    _localDeviceSecret?: string
+  ): Promise<{ ok: boolean; profile?: DeviceProfile; error?: string }> {
+    const current = loadOrGenerateDeviceProfile();
+    if (!gatewayUrl) return { ok: false, error: 'Gateway URL sazlanmadyk' };
 
-  const qs = new URLSearchParams({
-    deviceId: current.id,
-    token: current.token,
-  }).toString();
+    const qs = new URLSearchParams({
+      deviceId: current.id,
+      token: current.token,
+    }).toString();
 
-  const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/devices/status?${qs}`;
-  const headers: Record<string, string> = {};
-  if (adminSecret) {
-    const sig = crypto.createHmac('sha256', adminSecret).update('{}').digest('hex');
-    headers['x-admin-signature'] = sig;
-  }
+    const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/devices/status?${qs}`;
+    const headers: Record<string, string> = {};
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    const res = await nodeFetch(url, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    const signingSecret = current.deviceSyncSecret || localDeviceSecret;
+    if (signingSecret) {
+      const sig = crypto.createHmac('sha256', signingSecret).update(JSON.stringify({ deviceId: current.id })).digest('hex');
+      headers['x-device-sync-signature'] = sig;
+      headers['x-device-id'] = current.id;
+    }
 
-    if (!res.ok) {
-      if (res.status === 404) {
-        return registerDeviceWithGateway(gatewayUrl, adminSecret);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      const res = await nodeFetch(url, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 401) {
+          return registerDeviceWithGateway(gatewayUrl);
+        }
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
+          if (body?.status === 'rejected') {
+            return { ok: false, error: 'Device secret mismatch. Re-approval required.', status: 'rejected' };
+          }
+        }
+        return { ok: false, error: `VPS Gateway error (${res.status})` };
       }
-      return { ok: false, error: `VPS Gateway error (${res.status})` };
+
+       const data = (await res.json()) as any;
+
+       if (current.deviceSyncSecret && data.deviceSyncSecret && data.deviceSyncSecret !== current.deviceSyncSecret) {
+         return { ok: false, error: 'Device secret changed. Re-approval required.', status: 'rejected' };
+       }
+
+       const updated = saveDeviceProfile({
+         status: data.status || 'pending',
+         tenantId: data.tenantId || undefined,
+         tenantSlug: data.tenantSlug || undefined,
+         tenantSlugs: data.tenantSlugs || data.companySlugs || undefined,
+         companyName: data.companyName || undefined,
+         companyNames: data.companyNames || undefined,
+         companySlugs: data.companySlugs || data.tenantSlugs || undefined,
+         deviceSyncSecret: data.deviceSyncSecret || current.deviceSyncSecret || undefined,
+         name: data.name || current.name,
+       });
+
+       return { ok: true, profile: updated };
+     } catch (err: any) {
+       return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady' };
+     }
+   }
+
+  export async function checkDevicePermission(
+    gatewayUrl: string,
+    _adminSecret?: string,
+    localDeviceSecret?: string
+  ): Promise<PermissionResult> {
+    const current = loadOrGenerateDeviceProfile();
+    if (!gatewayUrl) return { permissionGranted: false, reason: 'error', error: 'Gateway URL sazlanmadyk' };
+
+    const qs = new URLSearchParams({
+      deviceId: current.id,
+      token: current.token,
+    }).toString();
+
+    const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/devices/status?${qs}`;
+    const headers: Record<string, string> = {};
+
+    const signingSecret = localDeviceSecret || current.deviceSyncSecret;
+    if (signingSecret) {
+      const sig = crypto.createHmac('sha256', signingSecret).update(JSON.stringify({ deviceId: current.id })).digest('hex');
+      headers['x-device-sync-signature'] = sig;
+      headers['x-device-id'] = current.id;
     }
 
-    const data = (await res.json()) as any;
-    const updated = saveDeviceProfile({
-      status: data.status || 'pending',
-      tenantId: data.tenantId || undefined,
-      tenantSlug: data.tenantSlug || undefined,
-      companyName: data.companyName || undefined,
-      name: data.name || current.name,
-    });
+   try {
+     const controller = new AbortController();
+     const timeout = setTimeout(() => controller.abort(), 6000);
+     const res = await nodeFetch(url, {
+       method: 'GET',
+       headers,
+       signal: controller.signal,
+     });
+     clearTimeout(timeout);
 
-    return { ok: true, profile: updated };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'VPS Gateway-e birigip bolmady' };
-  }
-}
+     if (!res.ok) {
+       if (res.status === 404) {
+         const updated = saveDeviceProfile({ status: 'blocked' });
+         return { permissionGranted: false, reason: 'deleted', profile: updated, error: 'Enjam administrator tarapyndan pozuldy' };
+       }
+       if (res.status === 403) {
+         const body = await res.json().catch(() => ({}));
+         if (body?.status === 'rejected') {
+           const updated = saveDeviceProfile({ status: 'pending' });
+           return { permissionGranted: false, reason: 'rejected', profile: updated, error: 'Device secret changed. Re-approval required.' };
+         }
+       }
+       return { permissionGranted: false, reason: 'error', error: `VPS Gateway error (${res.status})` };
+     }
 
-export async function checkDevicePermission(
-  gatewayUrl: string,
-  adminSecret: string
-): Promise<PermissionResult> {
-  const current = loadOrGenerateDeviceProfile();
-  if (!gatewayUrl) return { permissionGranted: false, reason: 'error', error: 'Gateway URL sazlanmadyk' };
+      const data = (await res.json()) as any;
 
-  const qs = new URLSearchParams({
-    deviceId: current.id,
-    token: current.token,
-  }).toString();
-
-  const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/devices/status?${qs}`;
-  const headers: Record<string, string> = {};
-  if (adminSecret) {
-    const sig = crypto.createHmac('sha256', adminSecret).update('{}').digest('hex');
-    headers['x-admin-signature'] = sig;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    const res = await nodeFetch(url, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      if (res.status === 404) {
-        const updated = saveDeviceProfile({ status: 'blocked' });
-        return { permissionGranted: false, reason: 'deleted', profile: updated, error: 'Enjam administrator tarapyndan pozuldy' };
+      if (localDeviceSecret && data.deviceSyncSecret && data.deviceSyncSecret !== localDeviceSecret) {
+        const updated = saveDeviceProfile({ status: 'pending' });
+        return { permissionGranted: false, reason: 'rejected', profile: updated, error: 'Device secret changed. Re-approval required.' };
       }
-      return { permissionGranted: false, reason: 'error', error: `VPS Gateway error (${res.status})` };
+
+      const updated = saveDeviceProfile({
+        status: data.status || 'pending',
+        tenantId: data.tenantId || undefined,
+        tenantSlug: data.tenantSlug || undefined,
+        tenantSlugs: data.tenantSlugs || data.companySlugs || undefined,
+        companyName: data.companyName || undefined,
+        companyNames: data.companyNames || undefined,
+        companySlugs: data.companySlugs || data.tenantSlugs || undefined,
+        deviceSyncSecret: data.deviceSyncSecret || localDeviceSecret || undefined,
+        name: data.name || current.name,
+      });
+
+      if (data.status === 'blocked') {
+        return { permissionGranted: false, reason: 'blocked', profile: updated };
+      }
+
+      if (data.status === 'approved') {
+        return { permissionGranted: true, reason: 'ok', profile: updated };
+      }
+
+      return { permissionGranted: false, reason: 'error', profile: updated, error: `Status: ${data.status}` };
+    } catch (err: any) {
+      return { permissionGranted: false, reason: 'error', error: err?.message || 'VPS Gateway-e birigip bolmady' };
     }
-
-    const data = (await res.json()) as any;
-    const updated = saveDeviceProfile({
-      status: data.status || 'pending',
-      tenantId: data.tenantId || undefined,
-      tenantSlug: data.tenantSlug || undefined,
-      companyName: data.companyName || undefined,
-      name: data.name || current.name,
-    });
-
-    if (data.status === 'blocked') {
-      return { permissionGranted: false, reason: 'blocked', profile: updated };
-    }
-
-    if (data.status === 'approved') {
-      return { permissionGranted: true, reason: 'ok', profile: updated };
-    }
-
-    return { permissionGranted: false, reason: 'error', profile: updated, error: `Status: ${data.status}` };
-  } catch (err: any) {
-    return { permissionGranted: false, reason: 'error', error: err?.message || 'VPS Gateway-e birigip bolmady' };
   }
-}

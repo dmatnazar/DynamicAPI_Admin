@@ -6,7 +6,7 @@ import { initAutoUpdater } from './updater';
 import { createTray, destroyTray, setTrayStatus, resolveIconPath, type TrayConnectionStatus } from './tray';
 import * as localDb from './localDb';
 import * as mssqlHelper from './mssqlHelper';
-import { localAgentManager, initLocalAgentIpc } from './localAgent';
+import { localAgentManager, deviceEventsClient, initLocalAgentIpc } from './localAgent';
 import {
   loadOrGenerateDeviceProfile,
   saveDeviceProfile,
@@ -117,6 +117,7 @@ if (gotLock) {
   app.whenReady().then(() => {
     initLocalAgentIpc();
     localAgentManager.start();
+    deviceEventsClient.start();
     createWindow();
 
     createTray({
@@ -147,6 +148,7 @@ if (gotLock) {
 app.on('before-quit', () => {
   isQuitting = true;
   localAgentManager.stop();
+  deviceEventsClient.stop();
   destroyTray();
 });
 
@@ -262,6 +264,13 @@ ipcMain.handle('staff:verifyAdminPassword', (_e, password: string) => {
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+ipcMain.handle('app:getAutoLaunch', () => app.getLoginItemSettings().openAtLogin);
+
+ipcMain.handle('app:setAutoLaunch', (_e, enabled: boolean) => {
+  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true });
+  return { ok: true, openAtLogin: app.getLoginItemSettings().openAtLogin };
+});
 
 // App unlock password (scrypt hash in vault key appLockPasswordHash)
 ipcMain.handle('appLock:hasPassword', () => {
@@ -383,15 +392,13 @@ ipcMain.handle('device:saveProfile', (_e, patch: any) => {
 
 ipcMain.handle('device:register', async () => {
   const settings = localDb.getSettings();
-  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
-  return registerDeviceWithGateway(settings.gatewayUrl, secret);
+  return registerDeviceWithGateway(settings.gatewayUrl);
 });
 
 ipcMain.handle('device:requestPermission', async () => {
   const settings = localDb.getSettings();
-  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
-  const result = await checkDeviceStatusWithGateway(settings.gatewayUrl, secret);
-  if (result.ok && result.permissionGranted) {
+  const result = await checkDeviceStatusWithGateway(settings.gatewayUrl);
+  if (result.ok && result.profile?.status === 'approved') {
     return { ok: true };
   }
   return { ok: false, error: result.error || 'Permission not granted' };
@@ -399,14 +406,12 @@ ipcMain.handle('device:requestPermission', async () => {
 
 ipcMain.handle('device:checkStatus', async () => {
   const settings = localDb.getSettings();
-  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
-  return checkDeviceStatusWithGateway(settings.gatewayUrl, secret);
+  return checkDeviceStatusWithGateway(settings.gatewayUrl);
 });
 
 ipcMain.handle('device:checkPermission', async () => {
   const settings = localDb.getSettings();
-  const secret = localDb.decryptSecret(settings.adminSecretEnc || '');
-  return checkDevicePermission(settings.gatewayUrl, secret);
+  return checkDevicePermission(settings.gatewayUrl);
 });
 
 // ── Staff Login / Authentication Handlers ───────────────────────────────
@@ -419,20 +424,19 @@ ipcMain.handle('auth:loginStaff', async (_e, credentials: { username: string; pa
 
   const settings = localDb.getSettings();
   const gatewayUrl = settings.gatewayUrl;
+  // Local master password only (app unlock / bootstrap admin) — NOT VPS ADMIN_SYNC_SECRET
   const adminSecret = localDb.decryptSecret(settings.adminSecretEnc || '');
 
-  // ── STEP 1: Try VPS Gateway first (source of truth) ──────────────────
-  if (gatewayUrl && adminSecret) {
+  // ── STEP 1: Try VPS Gateway public auth (no ADMIN_SYNC_SECRET needed) ─
+  // Electron → VPS admin APIs use device_sync_secret; public /api/auth/verify needs none.
+  if (gatewayUrl) {
     try {
-      const qs = new URLSearchParams({ username: username.trim(), password }).toString();
-      const url = `${gatewayUrl.replace(/\/$/, '')}/api/auth/verify?${qs}`;
-      const sig = crypto.createHmac('sha256', adminSecret).update(JSON.stringify({ username: username.trim(), password })).digest('hex');
-      console.log('[auth] trying VPS verify', { url: url.replace(/\?.*/, '?...'), username: username.trim() });
+      const url = `${gatewayUrl.replace(/\/$/, '')}/api/auth/verify`;
+      console.log('[auth] trying VPS verify', { url, username: username.trim() });
       const res = await nodeFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Signature': sig,
         },
         body: JSON.stringify({ username: username.trim(), password }),
       });

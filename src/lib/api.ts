@@ -15,7 +15,8 @@ export interface SyncResult {
  */
 export async function syncToVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   tenant: TenantConfig,
   endpoints: EndpointConfig[],
   includeConnectionString: boolean
@@ -71,13 +72,15 @@ export async function syncToVps(
     }),
   };
 
-  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const signedPayload = { deviceId, ...payload };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
 
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/sync-schema`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
     body: JSON.stringify(payload),
   });
@@ -103,7 +106,8 @@ export async function checkGatewayHealth(gatewayUrl: string): Promise<boolean> {
 /** Sync staff members for a tenant to VPS hub (BI Platform consumes these) */
 export async function syncStaffToVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   tenantSlug: string,
   staff: Array<{
     id: string;
@@ -120,12 +124,14 @@ export async function syncStaffToVps(
   }>
 ): Promise<{ status: string; staffLoaded: number }> {
   const payload = { tenantSlug, staff };
-  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const signedPayload = { deviceId, ...payload };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/sync-staff`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
     body: JSON.stringify(payload),
   });
@@ -139,17 +145,19 @@ export async function syncStaffToVps(
 /** Poll pending registrations for a tenant from VPS hub */
 export async function fetchPendingRegistrations(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   tenantSlug: string
 ): Promise<any[]> {
-  // GET signs empty object "{}"
-  const signature = await window.cryptoAPI.signPayload({}, adminSecret);
+  const signedPayload = { deviceId };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const url = `${gatewayUrl.replace(/\/$/, '')}/api/admin/registrations?tenantSlug=${encodeURIComponent(tenantSlug)}&status=pending&markDelivered=1`;
   const res = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
   });
   if (!res.ok) {
@@ -162,7 +170,8 @@ export async function fetchPendingRegistrations(
 /** Approve or reject a BI registration — creates staff on VPS */
 export async function resolveRegistrationOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   payload: {
     id: string;
     action: 'approve' | 'reject';
@@ -171,12 +180,14 @@ export async function resolveRegistrationOnVps(
     reviewedBy?: string;
   }
 ): Promise<any> {
-  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const signedPayload = { deviceId, ...payload };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/registrations/resolve`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
     body: JSON.stringify(payload),
   });
@@ -190,7 +201,8 @@ export async function resolveRegistrationOnVps(
 
 export async function updateRegistrationOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   payload: {
     id: string;
     firstName?: string;
@@ -202,12 +214,14 @@ export async function updateRegistrationOnVps(
     note?: string;
   }
 ): Promise<any> {
-  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const signedPayload = { deviceId, ...payload };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/registrations/update`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
     body: JSON.stringify(payload),
   });
@@ -222,19 +236,22 @@ export async function updateRegistrationOnVps(
 /** Pull full catalog from VPS (staff, tenants, endpoints) */
 export async function fetchCatalogFromVps(
   gatewayUrl: string,
-  adminSecret: string
+  deviceId: string,
+  deviceSecret: string
 ): Promise<{
   tenants: any[];
   endpoints: any[];
   staff: any[];
   syncedAt?: string;
 }> {
-  const signature = await window.cryptoAPI.signPayload({}, adminSecret);
+  const signedPayload = { deviceId };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/catalog`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
   });
   if (!res.ok) throw new Error(`Catalog fetch failed: ${res.status}`);
@@ -244,16 +261,19 @@ export async function fetchCatalogFromVps(
 /** Soft-deactivate tenant on VPS (is_active=0) */
 export async function deactivateTenantOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   slug: string
 ): Promise<void> {
   const payload = { slug, isActive: false };
-  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+  const signedPayload = { deviceId, ...payload };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/admin/tenant-update`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
     body: JSON.stringify(payload),
   });
@@ -263,13 +283,15 @@ export async function deactivateTenantOnVps(
   }
 }
 
-async function signedPost(gatewayUrl: string, adminSecret: string, path: string, payload: Record<string, unknown>) {
-  const signature = await window.cryptoAPI.signPayload(payload, adminSecret);
+async function signedPost(gatewayUrl: string, deviceId: string, deviceSecret: string, path: string, payload: Record<string, unknown>) {
+  const signedPayload = { deviceId, ...payload };
+  const signature = await window.cryptoAPI.signPayload(signedPayload, deviceSecret);
   const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Signature': signature,
+      'X-Device-Sync-Signature': signature,
+      'X-Device-Id': deviceId,
     },
     body: JSON.stringify(payload),
   });
@@ -280,25 +302,28 @@ async function signedPost(gatewayUrl: string, adminSecret: string, path: string,
 /** Hard-delete tenant — fails with has_dependencies if staff/APIs remain */
 export async function deleteTenantOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   slug: string
 ): Promise<{ ok: boolean; status: number; body: any }> {
-  return signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-delete', { slug });
+  return signedPost(gatewayUrl, deviceId, deviceSecret, '/api/admin/tenant-delete', { slug });
 }
 
 /** Hard-delete staff on VPS */
 export async function deleteStaffOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   opts: { id?: string; username?: string; tenantSlug?: string }
 ): Promise<{ ok: boolean; status: number; body: any }> {
-  return signedPost(gatewayUrl, adminSecret, '/api/admin/staff-delete', opts as any);
+  return signedPost(gatewayUrl, deviceId, deviceSecret, '/api/admin/staff-delete', opts as any);
 }
 
 /** Acquire / release / heartbeat edit lock (is_open) */
 export async function entityLockOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   opts: {
     entityType: 'tenant' | 'staff' | 'endpoint';
     entityId: string;
@@ -306,13 +331,14 @@ export async function entityLockOnVps(
     openedBy?: string;
   }
 ): Promise<{ ok: boolean; status: number; body: any }> {
-  return signedPost(gatewayUrl, adminSecret, '/api/admin/entity-lock', opts as any);
+  return signedPost(gatewayUrl, deviceId, deviceSecret, '/api/admin/entity-lock', opts as any);
 }
 
 /** Tenant update with optional expectedUpdatedAt concurrency token */
 export async function updateTenantOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   payload: {
     slug: string;
     name?: string;
@@ -320,17 +346,18 @@ export async function updateTenantOnVps(
     expectedUpdatedAt?: string;
   }
 ): Promise<{ ok: boolean; status: number; body: any }> {
-  return signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-update', payload as any);
+  return signedPost(gatewayUrl, deviceId, deviceSecret, '/api/admin/tenant-update', payload as any);
 }
 
 /** Ensure tenant exists on VPS — creates it if missing */
 export async function ensureTenantOnVps(
   gatewayUrl: string,
-  adminSecret: string,
+  deviceId: string,
+  deviceSecret: string,
   tenant: { id: string; slug: string; name: string }
 ): Promise<{ ok: boolean; created: boolean; status: number; body: any }> {
   try {
-    const check = await signedPost(gatewayUrl, adminSecret, '/api/admin/catalog', {});
+    const check = await signedPost(gatewayUrl, deviceId, deviceSecret, '/api/admin/catalog', {});
     if (check.ok && check.body) {
       const exists = (check.body.tenants || []).some(
         (t: any) => t.slug === tenant.slug || t.id === tenant.id
@@ -343,7 +370,7 @@ export async function ensureTenantOnVps(
     // ignore catalog check failure, try to create anyway
   }
 
-  const res = await signedPost(gatewayUrl, adminSecret, '/api/admin/tenant-create', {
+  const res = await signedPost(gatewayUrl, deviceId, deviceSecret, '/api/admin/tenant-create', {
     slug: tenant.slug,
     name: tenant.name,
   });

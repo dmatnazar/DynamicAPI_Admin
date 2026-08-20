@@ -21,53 +21,205 @@ interface ActiveSocket {
   reconnectTimer?: NodeJS.Timeout;
 }
 
-function getCredentials(): { gatewayUrl: string; adminSecret: string } | null {
-  // 1) Try localDb settings first
+/**
+ * Electron → VPS: only Gateway URL is required here.
+ * Signing uses device_sync_secret from device profile (NOT ADMIN_SYNC_SECRET).
+ */
+function getGatewayUrl(): string | null {
   try {
     const s = localDb.getSettings();
     const gUrl = (s.gatewayUrl || '').trim();
-    const sec = localDb.decryptSecret(s.adminSecretEnc || '').trim();
-    if (gUrl && sec) return { gatewayUrl: gUrl, adminSecret: sec };
-  } catch {
-    /* ignore */
-  }
+    if (gUrl) return gUrl;
+  } catch { /* ignore */ }
 
-  // 2) Try vault.json fallback
   try {
     const vaultPath = path.join(app.getPath('userData'), 'vault.json');
     if (fs.existsSync(vaultPath)) {
       const data = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
       let gatewayUrl = data.gatewayUrl || '';
-      let adminSecret = data.adminSyncSecret || data.adminSecret || '';
-
-      if (safeStorage.isEncryptionAvailable()) {
+      if (safeStorage.isEncryptionAvailable() && gatewayUrl && !gatewayUrl.startsWith('http')) {
         try {
-          if (gatewayUrl && !gatewayUrl.startsWith('http')) {
-            gatewayUrl = safeStorage.decryptString(Buffer.from(gatewayUrl, 'base64'));
-          }
-          if (adminSecret) {
-            adminSecret = safeStorage.decryptString(Buffer.from(adminSecret, 'base64'));
-          }
-        } catch {
-          /* ignore */
-        }
+          gatewayUrl = safeStorage.decryptString(Buffer.from(gatewayUrl, 'base64'));
+        } catch { /* ignore */ }
       }
-      if (gatewayUrl && adminSecret) return { gatewayUrl: gatewayUrl.trim(), adminSecret: adminSecret.trim() };
+      if (gatewayUrl) return gatewayUrl.trim();
     }
-  } catch {
-    /* ignore */
-  }
+  } catch { /* ignore */ }
 
   return null;
 }
 
-import { loadOrGenerateDeviceProfile } from './deviceFingerprint';
+function getCredentials(): { gatewayUrl: string; adminSecret: string } | null {
+  const gatewayUrl = getGatewayUrl();
+  if (!gatewayUrl) return null;
+  return { gatewayUrl, adminSecret: '' };
+}
+
+import {
+  loadOrGenerateDeviceProfile,
+  saveDeviceProfile,
+  checkDeviceStatusWithGateway,
+  type DeviceProfile,
+} from './deviceFingerprint';
+
+// ── Real-time device event listener ──────────────────────────────────────
+// Receives approve/block/delete pushes from VPS gateway in real-time.
+class DeviceEventsClient {
+  private socket: WebSocket | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private isRunning = false;
+  private reconnectAttempts = 0;
+
+  public start() {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    this.connect();
+  }
+
+  public stop() {
+    this.isRunning = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    try {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        this.socket.close();
+      }
+    } catch {
+      /* ignore */
+    }
+    this.socket = null;
+  }
+
+  public restart() {
+    this.stop();
+    this.start();
+  }
+
+  private connect() {
+    if (!this.isRunning) return;
+
+    const creds = getCredentials();
+    if (!creds || !creds.gatewayUrl) {
+      // Retry later — settings may be configured after startup
+      this.scheduleReconnect('');
+      return;
+    }
+
+    const profile = loadOrGenerateDeviceProfile();
+    if (!profile.id) return;
+
+    const wsBase = creds.gatewayUrl
+      .replace(/^https:\/\//i, 'wss://')
+      .replace(/^http:\/\//i, 'ws://')
+      .replace(/\/$/, '');
+
+    const deviceSecret = profile.deviceSyncSecret || profile.token || '';
+    const signature = crypto
+      .createHmac('sha256', deviceSecret)
+      .update(JSON.stringify({ deviceId: profile.id }))
+      .digest('hex');
+
+    const wsUrl = `${wsBase}/ws/device-events?deviceId=${encodeURIComponent(profile.id)}&deviceSignature=${encodeURIComponent(signature)}`;
+
+    console.log(`[DeviceEventsClient] 🔄 Connecting to device events WebSocket...`);
+
+    try {
+      const ws = new WebSocket(wsUrl, {
+        headers: {
+          'X-Device-Sync-Signature': signature,
+          'X-Device-Id': profile.id,
+        },
+        rejectUnauthorized: false,
+      });
+      this.socket = ws;
+
+      ws.on('open', () => {
+        this.reconnectAttempts = 0;
+        console.log('[DeviceEventsClient] 🟢 Connected to device events WebSocket');
+      });
+
+      ws.on('message', (data: WebSocket.RawData) => {
+        try {
+          const raw = data.toString('utf8');
+          if (!raw) return;
+          const msg = JSON.parse(raw);
+
+          if (msg.type === 'PING') {
+            ws.send(JSON.stringify({ type: 'PONG', timestamp: new Date().toISOString() }));
+            return;
+          }
+
+          if (msg.event === 'DEVICE_EVENT' && msg.type) {
+            console.log('[DeviceEventsClient] 📡 Received device event:', msg.type, msg.deviceId);
+
+            // Notify all windows — renderer reacts (auto-navigate, blocked screen, etc.)
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) {
+                win.webContents.send('device:event', msg);
+              }
+            }
+
+            // Immediately re-check device status from VPS for fresh state
+            void this.syncDeviceStatusFromVps(creds.gatewayUrl);
+          }
+        } catch (err) {
+          console.warn('[DeviceEventsClient] Failed to parse message:', err);
+        }
+      });
+
+      ws.on('close', (code, reason) => {
+        console.warn(`[DeviceEventsClient] 🔴 Device events socket closed (${code}: ${reason?.toString() || 'none'})`);
+        this.socket = null;
+        this.scheduleReconnect(creds.gatewayUrl);
+      });
+
+      ws.on('error', (err: Error) => {
+        console.warn(`[DeviceEventsClient] ⚠️ Device events socket error:`, err.message);
+        this.socket = null;
+        this.scheduleReconnect(creds.gatewayUrl);
+      });
+    } catch (err) {
+      console.warn('[DeviceEventsClient] Failed to connect:', err);
+      this.scheduleReconnect(creds.gatewayUrl);
+    }
+  }
+
+  private scheduleReconnect(gatewayUrl: string) {
+    if (!this.isRunning) return;
+    if (this.reconnectTimer) return;
+    const delay = Math.min(15_000, 2_000 + this.reconnectAttempts * 2_000);
+    this.reconnectAttempts++;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private async syncDeviceStatusFromVps(gatewayUrl: string) {
+    try {
+      const result = await checkDeviceStatusWithGateway(gatewayUrl);
+      if (result.ok && result.profile) {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send('device:statusChanged', result.profile);
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 class LocalAgentManager {
   private activeSockets = new Map<string, ActiveSocket>();
   private statuses = new Map<string, TenantAgentStatus>();
   private isRunning = false;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private lastCredWarning = 0;
+  private lastVpsStatusCheck = 0;
 
   public start() {
     if (this.isRunning) return;
@@ -119,27 +271,53 @@ class LocalAgentManager {
   public syncConnections() {
     if (!this.isRunning) return;
 
-    // Check device approval status
+    // Check device approval status from local profile first (fast path)
     const dev = loadOrGenerateDeviceProfile();
+    console.log(`[LocalAgent] syncConnections - device status: "${dev.status}"`);
     if (dev.status !== 'approved') {
       console.log(`[LocalAgent] ⏳ Device (${dev.id}) status is "${dev.status}". Tunnel waiting for admin confirmation.`);
       return;
     }
 
     const creds = getCredentials();
-    if (!creds || !creds.gatewayUrl || !creds.adminSecret) {
-      console.log('[LocalAgent] ⚠️ Gateway credentials not configured yet in Electron Settings.');
+    if (!creds || !creds.gatewayUrl) {
+      const now = Date.now();
+      if (now - this.lastCredWarning > 30_000) {
+        console.log('[LocalAgent] ⚠️ Gateway credentials not configured yet in Electron Settings.');
+        this.lastCredWarning = now;
+      }
       return;
+    }
+
+    // Periodically verify device status with VPS gateway (every 30s)
+    const now = Date.now();
+    if (now - this.lastVpsStatusCheck > 30_000) {
+      this.lastVpsStatusCheck = now;
+      console.log(`[LocalAgent] 🔍 Checking device status with VPS...`);
+      void this.verifyDeviceStatusWithVps(creds.gatewayUrl, creds.adminSecret);
     }
 
     const { gatewayUrl, adminSecret } = creds;
     const companies = localDb.listCompanies();
+
+    // ⚠️ Diňe device-e baglanan (assigned) kompaniýalar üçin tunnel açylýar.
+    // Başga kompaniýalar üçin sync işlemeýär — ulanyjy talaby.
+    const assignedSlugs = new Set<string>();
+    const devSlugs = dev.companySlugs || dev.tenantSlugs || [];
+    devSlugs.forEach((s) => assignedSlugs.add(s));
+
     const activeSlugs = new Set<string>();
 
     for (const company of companies) {
       if (company.isActive === false) continue;
       const slug = (company.slug || '').trim();
       if (!slug) continue;
+
+      // Diňe assigned slug-lara degişli kompaniýalary sync et
+      if (assignedSlugs.size > 0 && !assignedSlugs.has(slug)) {
+        console.log(`[LocalAgent] ⏭️ "${slug}" device-e baglanmadyk — tunnel açylmaýar (assigned: ${[...assignedSlugs].join(', ')})`);
+        continue;
+      }
 
       activeSlugs.add(slug);
 
@@ -173,11 +351,57 @@ class LocalAgentManager {
     }
   }
 
+  private async verifyDeviceStatusWithVps(gatewayUrl: string, _adminSecret: string) {
+    try {
+      const result = await checkDeviceStatusWithGateway(gatewayUrl);
+      if (result.ok && result.profile) {
+        const vpsStatus = result.profile.status;
+        const localProfile = loadOrGenerateDeviceProfile();
+        if (localProfile.status !== vpsStatus) {
+          console.log(`[LocalAgent] 🔄 Device status changed in VPS: "${localProfile.status}" -> "${vpsStatus}". Updating local profile.`);
+          const updated = saveDeviceProfile({ status: vpsStatus });
+          this.notifyDeviceStatusChanged(updated);
+        }
+      }
+    } catch {
+      /* ignore background verification errors */
+    }
+  }
+
+  private notifyDeviceStatusChanged(profile: DeviceProfile) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('device:statusChanged', profile);
+      }
+    }
+  }
+
   private connectTenant(company: localDb.CompanyRecord, gatewayUrl: string, adminSecret: string) {
     const slug = company.slug;
     const existing = this.activeSockets.get(slug);
     if (existing?.reconnectTimer) {
       clearTimeout(existing.reconnectTimer);
+    }
+
+    const profile = loadOrGenerateDeviceProfile();
+    const deviceSecret = profile.deviceSyncSecret || profile.token || '';
+    if (!deviceSecret) {
+      console.error(`[LocalAgent] ❌ No deviceSyncSecret for tunnel "${slug}". Device must be approved on BI first.`);
+      const st = this.statuses.get(slug) || {
+        tenantSlug: slug,
+        tenantName: company.name,
+        online: false,
+        reconnectAttempts: 0,
+      };
+      st.online = false;
+      st.lastError = 'deviceSyncSecret missing — approve device on BI';
+      this.statuses.set(slug, st);
+      this.broadcastStatus();
+      return;
+    }
+    if (profile.status !== 'approved') {
+      console.error(`[LocalAgent] ❌ Device status is "${profile.status}" — tunnel skipped for "${slug}"`);
+      return;
     }
 
     const wsBase = gatewayUrl
@@ -186,19 +410,20 @@ class LocalAgentManager {
       .replace(/\/$/, '');
 
     const signature = crypto
-      .createHmac('sha256', adminSecret)
-      .update(slug)
+      .createHmac('sha256', deviceSecret)
+      .update(JSON.stringify({ deviceId: profile.id }))
       .digest('hex');
 
     const appVersion = app.isPackaged ? app.getVersion() : 'dev';
-    const wsUrl = `${wsBase}/ws/agent?tenantSlug=${encodeURIComponent(slug)}&signature=${encodeURIComponent(signature)}&client=Electron_${encodeURIComponent(appVersion)}`;
+    const wsUrl = `${wsBase}/ws/agent?tenantSlug=${encodeURIComponent(slug)}&deviceId=${encodeURIComponent(profile.id)}&deviceSignature=${encodeURIComponent(signature)}&client=Electron_${encodeURIComponent(appVersion)}`;
 
     console.log(`[LocalAgent] 🔄 Connecting WebSocket tunnel for "${slug}" → ${wsUrl.replace(/signature=.*/, 'signature=***')}`);
 
     try {
       const ws = new WebSocket(wsUrl, {
         headers: {
-          'X-Admin-Signature': signature,
+          'X-Device-Sync-Signature': signature,
+          'X-Device-Id': profile.id,
           'User-Agent': `Electron-LocalAgent/${appVersion}`,
         },
         rejectUnauthorized: false, // allow self-signed / IP certs in dev/LAN
@@ -381,11 +606,13 @@ class LocalAgentManager {
 }
 
 export const localAgentManager = new LocalAgentManager();
+export const deviceEventsClient = new DeviceEventsClient();
 
 export function initLocalAgentIpc() {
   ipcMain.handle('agent:getStatuses', () => localAgentManager.getStatuses());
   ipcMain.handle('agent:restart', () => {
     localAgentManager.restart();
+    deviceEventsClient.restart();
     return true;
   });
 }

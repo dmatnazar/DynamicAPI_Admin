@@ -9,6 +9,7 @@ import {
 } from '../../lib/api';
 import { useTenantStore } from '../../store/useTenantStore';
 import { useStaffStore } from '../../store/useStaffStore';
+import { useDeviceStore } from '../../store/useDeviceStore';
 import type { StaffMember } from '../../types/staff.types';
 import uuid from '../../lib/uuid';
 
@@ -49,20 +50,22 @@ export function RegistrationsPanel() {
     void (async () => {
       const url = await window.vaultAPI?.get?.('gatewayUrl');
       if (url) setGatewayUrl(url);
-      const secret = await window.vaultAPI?.get?.('adminSyncSecret');
-      if (secret) setAdminSecret(secret);
     })();
   }, []);
 
+  const profile = useDeviceStore((s) => s.profile);
+  const deviceId = profile?.id || '';
+  const deviceSecret = profile?.deviceSyncSecret || '';
+
   const load = useCallback(async () => {
-    if (!gatewayUrl || !adminSecret || tenants.length === 0) return;
+    if (!gatewayUrl || !deviceSecret || tenants.length === 0) return;
     setLoading(true);
     setError('');
     try {
       const all: PendingReg[] = [];
       for (const t of tenants) {
         try {
-          const list = await fetchPendingRegistrations(gatewayUrl, adminSecret, t.slug);
+          const list = await fetchPendingRegistrations(gatewayUrl, deviceId, deviceSecret, t.slug);
           all.push(...list);
         } catch {
           /* ignore per-tenant */
@@ -74,7 +77,7 @@ export function RegistrationsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [gatewayUrl, adminSecret, tenants]);
+  }, [gatewayUrl, deviceSecret, deviceId, tenants]);
 
   useEffect(() => {
     void load();
@@ -95,10 +98,10 @@ export function RegistrationsPanel() {
   }
 
   async function saveEdit() {
-    if (!editId || !gatewayUrl || !adminSecret) return;
+    if (!editId || !gatewayUrl || !deviceSecret) return;
     setActing(editId);
     try {
-      await updateRegistrationOnVps(gatewayUrl, adminSecret, {
+      await updateRegistrationOnVps(gatewayUrl, deviceId, deviceSecret, {
         id: editId,
         ...editForm,
       });
@@ -112,7 +115,7 @@ export function RegistrationsPanel() {
   }
 
   async function resolve(reg: PendingReg, action: 'approve' | 'reject') {
-    if (!gatewayUrl || !adminSecret) return;
+    if (!gatewayUrl || !deviceSecret) return;
     setActing(reg.id);
     try {
       const payload: any = {
@@ -127,7 +130,7 @@ export function RegistrationsPanel() {
         payload.phone = editForm.phone;
         payload.email = editForm.email;
       }
-      const result = await resolveRegistrationOnVps(gatewayUrl, adminSecret, payload);
+      const result = await resolveRegistrationOnVps(gatewayUrl, deviceId, deviceSecret, payload);
 
       if (action === 'approve') {
         const src = editId === reg.id ? editForm : reg;

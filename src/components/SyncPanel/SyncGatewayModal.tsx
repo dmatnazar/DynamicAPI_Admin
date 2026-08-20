@@ -12,7 +12,8 @@ interface Props {
   open: boolean;
   onClose: () => void;
   gatewayUrl: string;
-  adminSecret: string;
+  deviceId: string;
+  deviceSecret: string;
   tenant: TenantConfig;
   endpoints: EndpointConfig[];
 }
@@ -28,7 +29,8 @@ export function SyncGatewayModal({
   open,
   onClose,
   gatewayUrl,
-  adminSecret,
+  deviceId,
+  deviceSecret,
   tenant,
   endpoints,
 }: Props) {
@@ -50,7 +52,7 @@ export function SyncGatewayModal({
     setState('syncing');
     setMessage('');
     try {
-      const result = await syncToVps(gatewayUrl, adminSecret, tenant, endpoints, true);
+      const result = await syncToVps(gatewayUrl, deviceId, deviceSecret, tenant, endpoints, true);
       setMessage(`${result.endpointsLoaded} endpoint synced · ${new Date(result.syncedAt).toLocaleString()}`);
       setState('success');
     } catch (err) {

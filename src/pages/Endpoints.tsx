@@ -3,6 +3,7 @@ import { acquireEntityLock, releaseEntityLock } from '../lib/entityLock';
 import { Download, Upload, Plus, Trash2, Play, CloudUpload, Copy } from 'lucide-react';
 import { useTenantStore } from '../store/useTenantStore';
 import { useEndpointStore } from '../store/useEndpointStore';
+import { useDeviceStore } from '../store/useDeviceStore';
 import { EndpointList } from '../components/ApiBuilder/EndpointList';
 import { EndpointEditor } from '../components/ApiBuilder/EndpointEditor';
 import { QueryEditorPage } from '../components/ApiBuilder/QueryEditorPage';
@@ -61,10 +62,8 @@ export function EndpointsPage() {
   useEffect(() => {
     console.log('[EndpointsPage] mount / hydrate settings');
     window.vaultAPI?.get('gatewayUrl').then((v) => v && setGatewayUrl(v));
-    window.vaultAPI?.get('adminSyncSecret').then((v) => v && setAdminSecret(v));
     window.dbAPI?.getSettings().then((s) => {
       if (s?.gatewayUrl) setGatewayUrl(s.gatewayUrl);
-      if (s?.adminSecret) setAdminSecret(s.adminSecret);
     });
   }, []);
 
@@ -433,7 +432,8 @@ export function EndpointsPage() {
         open={syncModalOpen}
         onClose={() => setSyncModalOpen(false)}
         gatewayUrl={gatewayUrl}
-        adminSecret={adminSecret}
+        deviceId={useDeviceStore.getState().profile?.id || ''}
+        deviceSecret={useDeviceStore.getState().profile?.deviceSyncSecret || ''}
         tenant={activeTenant}
         endpoints={endpoints}
       />

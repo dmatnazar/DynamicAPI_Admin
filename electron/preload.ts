@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('updaterAPI', {
 
 contextBridge.exposeInMainWorld('appAPI', {
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
+  getAutoLaunch: () => ipcRenderer.invoke('app:getAutoLaunch'),
+  setAutoLaunch: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
 });
 
 contextBridge.exposeInMainWorld('windowAPI', {
@@ -135,6 +137,16 @@ contextBridge.exposeInMainWorld('deviceAPI', {
   checkPermission: () => ipcRenderer.invoke('device:checkPermission'),
   requestPermission: () => ipcRenderer.invoke('device:requestPermission'),
   saveProfile: (patch: unknown) => ipcRenderer.invoke('device:saveProfile', patch),
+  onStatusChanged: (cb: (profile: unknown) => void) => {
+    const handler = (_e: any, data: unknown) => cb(data);
+    ipcRenderer.on('device:statusChanged', handler);
+    return () => ipcRenderer.removeListener('device:statusChanged', handler);
+  },
+  onEvent: (cb: (event: { type: string; deviceId: string; status?: string; companySlugs?: string[]; companyNames?: string[]; timestamp?: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('device:event', handler);
+    return () => ipcRenderer.removeListener('device:event', handler);
+  },
 });
 
 contextBridge.exposeInMainWorld('authAPI', {

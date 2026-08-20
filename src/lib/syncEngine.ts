@@ -30,12 +30,31 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let intervalSec = 30;
 let lastNotifyFingerprint = '';
 let lastOfflineToast = 0;
+let syncEnabled = false;
 let lastSnapshot: SyncStatusSnapshot = {
   running: false,
   queueLength: 0,
   online: null,
   intervalSec: 30,
 };
+
+export async function isSyncEnabled(): Promise<boolean> {
+  try {
+    const v = await window.vaultAPI?.get?.('syncEnabled');
+    return v === '1' || v === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export async function setSyncEnabled(value: boolean): Promise<void> {
+  try {
+    await window.vaultAPI?.set?.('syncEnabled', value ? '1' : '0');
+    syncEnabled = value;
+  } catch {
+    /* ignore */
+  }
+}
 
 function emit(partial: Partial<SyncStatusSnapshot> = {}) {
   lastSnapshot = { ...lastSnapshot, ...partial, running };
@@ -52,17 +71,41 @@ export function getSyncStatus(): SyncStatusSnapshot {
   return lastSnapshot;
 }
 
-async function getCreds(): Promise<{ gatewayUrl: string; adminSecret: string } | null> {
+/**
+ * Electron signs ALL VPS requests with device_sync_secret (devices.device_sync_secret on VPS).
+ * Never use ADMIN_SYNC_SECRET / adminSyncSecret here — that is BI ↔ VPS only.
+ */
+async function getCreds(): Promise<{ gatewayUrl: string; deviceId: string; deviceSecret: string } | null> {
   try {
-    const s = await window.dbAPI?.getSettings?.();
-    if (s?.gatewayUrl && s?.adminSecret) return { gatewayUrl: s.gatewayUrl, adminSecret: s.adminSecret };
-    const gatewayUrl = await window.vaultAPI?.get?.('gatewayUrl');
-    const adminSecret = await window.vaultAPI?.get?.('adminSyncSecret');
-    if (gatewayUrl && adminSecret) return { gatewayUrl, adminSecret };
-  } catch {
-    /* ignore */
+    const profile = useDeviceStore.getState().profile;
+    const deviceId = profile?.id || '';
+    const deviceSecret = profile?.deviceSyncSecret || '';
+    if (!deviceId || !deviceSecret) {
+      console.warn('[sync] deviceId/deviceSyncSecret missing — device must be approved first');
+      return null;
+    }
+
+    let gatewayUrl =
+      (await window.vaultAPI?.get?.('gatewayUrl')) ||
+      (await window.dbAPI?.getSettings?.())?.gatewayUrl ||
+      '';
+    gatewayUrl = String(gatewayUrl || '').trim().replace(/\/$/, '');
+    if (!gatewayUrl) {
+      console.warn('[sync] gatewayUrl missing in settings');
+      return null;
+    }
+
+    return { gatewayUrl, deviceId, deviceSecret };
+  } catch (e) {
+    console.warn('[sync] getCreds failed', e);
+    return null;
   }
-  return null;
+}
+
+async function getDeviceCreds(): Promise<{ gatewayUrl: string; deviceSecret: string } | null> {
+  const c = await getCreds();
+  if (!c) return null;
+  return { gatewayUrl: c.gatewayUrl, deviceSecret: c.deviceSecret };
 }
 
 async function checkDevicePermission(): Promise<{ allowed: boolean; reason?: string }> {
@@ -124,12 +167,44 @@ export async function enqueueChange(
   }
 }
 
-/** Tenants eligible to be pushed to the VPS — passive (isActive === false) companies are local-only. */
+/** Tenants eligible to be pushed to the VPS — passive (isActive === false) companies are local-only.
+ *  Only tenants explicitly assigned to this device are synced. If no assignments exist, returns empty array.
+ *  Caller should ensure device status has been checked before syncing. */
 export function getActiveTenants(): TenantConfig[] {
-  return useTenantStore.getState().tenants.filter((t) => t.isActive !== false);
+  const all = useTenantStore.getState().tenants.filter((t) => t.isActive !== false);
+  try {
+    const profile = useDeviceStore.getState().profile;
+    const assignedSlugs = profile?.companySlugs || profile?.tenantSlugs || [];
+    if (assignedSlugs.length > 0) {
+      return all.filter((t) => assignedSlugs.includes(t.slug));
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
 }
 
-async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }): Promise<string[]> {
+export function getDeviceAssignedSlugs(): string[] {
+  try {
+    const profile = useDeviceStore.getState().profile;
+    return profile?.companySlugs || profile?.tenantSlugs || [];
+  } catch {
+    return [];
+  }
+}
+
+export function isDeviceAssignmentReady(): boolean {
+  try {
+    const profile = useDeviceStore.getState().profile;
+    if (!profile) return false;
+    const slugs = profile.companySlugs || profile.tenantSlugs || [];
+    return slugs.length > 0 && profile.status === 'approved';
+  } catch {
+    return false;
+  }
+}
+
+async function syncStaffAll(creds: { gatewayUrl: string; deviceId: string; deviceSecret: string }): Promise<string[]> {
   const tenants = getActiveTenants();
   const allStaff = useStaffStore.getState().staff;
   const syncedUsernames: string[] = [];
@@ -147,7 +222,7 @@ async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }):
 
     // Ensure tenant exists on VPS before syncing staff
     try {
-      const ensured = await ensureTenantOnVps(creds.gatewayUrl, creds.adminSecret, t);
+      const ensured = await ensureTenantOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, t);
       if (!ensured.ok) {
         toastWarning(`${t.name || t.slug}`, 'Bu kärhana VPS-de döredip bolmady. Staff sync edilmedi.');
         continue;
@@ -179,7 +254,7 @@ async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }):
       });
     }
     try {
-      await syncStaffToVps(creds.gatewayUrl, creds.adminSecret, t.slug, payload);
+      await syncStaffToVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, t.slug, payload);
       for (const s of pushable) {
         if (s.active && !syncedUsernames.includes(s.username)) syncedUsernames.push(s.username);
       }
@@ -190,7 +265,7 @@ async function syncStaffAll(creds: { gatewayUrl: string; adminSecret: string }):
   return syncedUsernames;
 }
 
-async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string }) {
+async function syncEndpointsAll(creds: { gatewayUrl: string; deviceId: string; deviceSecret: string }) {
   const tenants = getActiveTenants();
   const byTenant = useEndpointStore.getState().endpointsByTenant;
 
@@ -208,7 +283,7 @@ async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string
 
     // Ensure tenant exists on VPS before syncing endpoints
     try {
-      const ensured = await ensureTenantOnVps(creds.gatewayUrl, creds.adminSecret, t);
+      const ensured = await ensureTenantOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, t);
       if (!ensured.ok) {
         toastWarning(`${t.name || t.slug}`, 'Bu kärhana VPS-de döredip bolmady. Endpointler sync edilmedi.');
         continue;
@@ -219,7 +294,7 @@ async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string
     }
 
     try {
-      await syncToVps(creds.gatewayUrl, creds.adminSecret, t, endpoints, true);
+      await syncToVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, t, endpoints, true);
     } catch (e: any) {
       toastWarning(`Sync şowsuz: ${t.name || t.slug}`, e?.message || 'Bilinmäýän ýalňyşlyk');
     }
@@ -228,17 +303,28 @@ async function syncEndpointsAll(creds: { gatewayUrl: string; adminSecret: string
 
 
 /** Merge catalog (tenants, endpoints, staff) from VPS into local Electron stores (BI → Electron) */
-async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: string }) {
+async function pullCatalogFromVps(creds: { gatewayUrl: string; deviceId: string; deviceSecret: string }) {
   try {
-    const catalog = await fetchCatalogFromVps(creds.gatewayUrl, creds.adminSecret);
+    const catalog = await fetchCatalogFromVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret);
     const tenants = useTenantStore.getState().tenants;
     const slugToId = new Map(tenants.map((t) => [t.slug, t.id]));
+
+    // Only pull data for tenants assigned to this device
+    const assignedSlugs = new Set<string>();
+    try {
+      const profile = useDeviceStore.getState().profile;
+      const slugs = profile?.companySlugs || profile?.tenantSlugs || [];
+      slugs.forEach((s) => assignedSlugs.add(s));
+    } catch {
+      /* ignore */
+    }
 
     // 1. Merge Tenants (Companies) — only ACTIVE tenants are pulled from the VPS catalog.
     //    Passive VPS tenants are skipped; the local isActive toggle is the source of truth,
     //    so an existing passive company is never re-activated from the VPS side.
     for (const ct of catalog.tenants || []) {
       if (ct.isActive === false) continue;
+      if (assignedSlugs.size > 0 && !assignedSlugs.has(ct.slug)) continue;
       const existing = tenants.find((t) => t.slug === ct.slug || t.id === ct.id);
       if (existing) {
         let changed = false;
@@ -294,6 +380,7 @@ async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: stri
     const endpointsByTenant = useEndpointStore.getState().endpointsByTenant;
 
     for (const ce of catalog.endpoints || []) {
+      if (assignedSlugs.size > 0 && !assignedSlugs.has(ce.tenantSlug)) continue;
       const companyId = currentSlugToId.get(ce.tenantSlug);
       if (!companyId) continue;
       const list = endpointsByTenant[companyId] || [];
@@ -350,6 +437,7 @@ async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: stri
     const byUser = new Map(localStaff.map((s) => [s.username.toLowerCase(), s]));
 
     for (const rs of catalog.staff || []) {
+      if (assignedSlugs.size > 0 && !assignedSlugs.has(rs.tenantSlug)) continue;
       const key = String(rs.username || '').toLowerCase();
       if (!key) continue;
       if (recentlyDeletedUsernames.has(key)) continue;
@@ -399,7 +487,7 @@ async function pullCatalogFromVps(creds: { gatewayUrl: string; adminSecret: stri
   }
 }
 
-async function runFullSync(creds: { gatewayUrl: string; adminSecret: string }) {
+async function runFullSync(creds: { gatewayUrl: string; deviceId: string; deviceSecret: string }) {
   await syncEndpointsAll(creds);
   const users = await syncStaffAll(creds);
   await pullCatalogFromVps(creds);
@@ -418,6 +506,13 @@ export async function processQueue(opts?: { forceFull?: boolean }): Promise<{
 
   const now = new Date().toISOString();
   try {
+    if (!syncEnabled) {
+      const msg = 'Sync açylmadyk — Sazlamalardan sync-i açyň';
+      await window.dbAPI?.updateSyncMeta?.({ lastError: msg, lastAttemptAt: now });
+      emit({ online: false, lastError: msg, lastAttemptAt: now });
+      return { ok: false, message: msg };
+    }
+
     await window.dbAPI?.updateSyncMeta?.({ lastAttemptAt: now });
 
     const creds = await getCreds();
@@ -485,10 +580,10 @@ export async function processQueue(opts?: { forceFull?: boolean }): Promise<{
             await runFullSync(creds);
           } else if (item.type === 'tenant-delete') {
             if (item.tenantSlug) {
-              const r = await deleteTenantOnVps(creds.gatewayUrl, creds.adminSecret, item.tenantSlug);
+              const r = await deleteTenantOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, item.tenantSlug);
               if (!r.ok && r.status === 409) {
                 // Dependencies remain — fall back to soft-deactivate
-                await deactivateTenantOnVps(creds.gatewayUrl, creds.adminSecret, item.tenantSlug);
+                await deactivateTenantOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, item.tenantSlug);
                 throw new Error(r.body?.message || 'has_dependencies');
               }
               if (!r.ok) throw new Error(r.body?.error || `tenant-delete ${r.status}`);
@@ -502,7 +597,7 @@ export async function processQueue(opts?: { forceFull?: boolean }): Promise<{
               if (t && t.isActive !== false) {
                 const endpoints =
                   useEndpointStore.getState().endpointsByTenant[t.id] || [];
-                await syncToVps(creds.gatewayUrl, creds.adminSecret, t, endpoints, true);
+                await syncToVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, t, endpoints, true);
               }
             } else {
               await syncEndpointsAll(creds);
@@ -606,6 +701,12 @@ function armTimer(sec: number) {
 
 export function startAutoSync() {
   void (async () => {
+    const enabled = await isSyncEnabled();
+    syncEnabled = enabled;
+    if (!enabled) {
+      await refreshMeta();
+      return;
+    }
     const sec = await resolveIntervalSec();
     armTimer(sec);
     await refreshMeta();

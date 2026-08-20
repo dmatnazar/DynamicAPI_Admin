@@ -36,6 +36,13 @@ export function TenantsPage() {
     }
   }, [hydrated, tenants.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Firma pozulanda edit modal ýapylsyn (ghost UI galmasyn)
+  useEffect(() => {
+    if (editOpen && !activeTenant) {
+      setEditOpen(false);
+    }
+  }, [editOpen, activeTenant]);
+
   const openCreate = () => setCreateOpen(true);
   const startOnboarding = () => setOnboarding({ step: 'company', companyId: null });
 
@@ -79,13 +86,9 @@ export function TenantsPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-neutral-100">Companies</h2>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" className="!px-2.5 !py-1.5 !text-xs" onClick={openCreate}>
+            <Button variant="ghost" className="!px-2.5 !py-1.5 !text-xs" onClick={startOnboarding}>
               <Plus size={13} className="inline mr-1 -mt-0.5" />
-              Täze
-            </Button>
-            <Button variant="ghost" className="!px-2.5 !py-1.5 !text-xs !text-emerald-400" onClick={startOnboarding}>
-              <Plus size={13} className="inline mr-1 -mt-0.5" />
-              Tiz
+              Täze kompaniýa
             </Button>
           </div>
         </div>
@@ -109,7 +112,7 @@ export function TenantsPage() {
             <p className="text-sm text-neutral-400">Entäk kompaniýa ýok</p>
             <Button onClick={startOnboarding} className="!text-xs">
               <Plus size={13} className="inline mr-1" />
-              Tiz göni başla
+              Täze kompaniýa goş
             </Button>
           </div>
         )}

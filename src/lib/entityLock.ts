@@ -1,5 +1,6 @@
 import { entityLockOnVps } from './api';
 import { toastWarning } from '../components/ui/Toast';
+import { useDeviceStore } from '../store/useDeviceStore';
 
 const LOCK_TTL_MS = 10 * 60 * 1000;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -9,11 +10,14 @@ function key(entityType: string, entityId: string) {
   return `${entityType}:${entityId}`;
 }
 
-async function getCreds(): Promise<{ gatewayUrl: string; adminSecret: string } | null> {
+async function getCreds(): Promise<{ gatewayUrl: string; deviceId: string; deviceSecret: string } | null> {
   try {
+    const profile = useDeviceStore.getState().profile;
+    const deviceSecret = profile?.deviceSyncSecret;
+    if (!deviceSecret) return null;
     const settings = await window.dbAPI?.getSettings?.();
-    if (settings?.gatewayUrl && settings?.adminSecret) {
-      return { gatewayUrl: settings.gatewayUrl, adminSecret: settings.adminSecret };
+    if (settings?.gatewayUrl) {
+      return { gatewayUrl: settings.gatewayUrl, deviceId: profile.id, deviceSecret };
     }
   } catch {
     /* ignore */
@@ -32,7 +36,7 @@ export async function acquireEntityLock(opts: {
     return true;
   }
   try {
-    const r = await entityLockOnVps(creds.gatewayUrl, creds.adminSecret, {
+    const r = await entityLockOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, {
       ...opts,
       action: 'lock',
       openedBy: opts.openedBy || 'electron',
@@ -69,7 +73,7 @@ export async function acquireEntityLock(opts: {
   heartbeats.set(
     k,
     setInterval(() => {
-      void entityLockOnVps(creds.gatewayUrl, creds.adminSecret, {
+      void entityLockOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, {
         ...opts,
         action: 'heartbeat',
         openedBy: opts.openedBy || 'electron',
@@ -90,7 +94,7 @@ export async function releaseEntityLock(opts: {
   const creds = await getCreds();
   if (!creds) return;
   try {
-    await entityLockOnVps(creds.gatewayUrl, creds.adminSecret, {
+    await entityLockOnVps(creds.gatewayUrl, creds.deviceId, creds.deviceSecret, {
       ...opts,
       action: 'unlock',
       openedBy: opts.openedBy || 'electron',

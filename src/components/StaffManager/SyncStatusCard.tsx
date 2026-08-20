@@ -7,12 +7,13 @@ import { hasPrimaryConnection } from '../../types/endpoint.types';
 
 interface Props {
   gatewayUrl: string;
-  adminSecret: string;
+  deviceId: string;
+  deviceSecret: string;
   tenant: TenantConfig | null;
   endpoints: EndpointConfig[];
 }
 
-export function SyncStatusCard({ gatewayUrl, adminSecret, tenant, endpoints }: Props) {
+export function SyncStatusCard({ gatewayUrl, deviceId, deviceSecret, tenant, endpoints }: Props) {
   const [state, setState] = useState<'idle' | 'syncing' | 'success' | 'failed'>('idle');
   const [message, setMessage] = useState('');
 
@@ -22,7 +23,7 @@ export function SyncStatusCard({ gatewayUrl, adminSecret, tenant, endpoints }: P
     if (!tenant) return;
     setState('syncing');
     try {
-      const result = await syncToVps(gatewayUrl, adminSecret, tenant, endpoints, true);
+      const result = await syncToVps(gatewayUrl, deviceId, deviceSecret, tenant, endpoints, true);
       setMessage(
         `${result.endpointsLoaded} endpoint(s) synced at ${new Date(result.syncedAt).toLocaleTimeString()}`
       );

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, Mail, Phone } from 'lucide-react';
 import { useStaffStore } from '../store/useStaffStore';
 import { useTenantStore } from '../store/useTenantStore';
+import { useDeviceStore } from '../store/useDeviceStore';
 import { RegistrationsPanel } from '../components/StaffManager/RegistrationsPanel';
 import { StaffForm } from '../components/StaffManager/StaffForm';
 import { Modal } from '../components/ui/Modal';
@@ -195,8 +196,9 @@ export function StaffPage() {
                 toastSuccess('Işgär pozuldy', 'Lokal + VPS sync');
                 try {
                   const settings = await window.dbAPI?.getSettings?.();
-                  if (settings?.gatewayUrl && settings?.adminSecret) {
-                    const res = await deleteStaffOnVps(settings.gatewayUrl, settings.adminSecret, {
+                  const profile = useDeviceStore.getState().profile;
+                  if (settings?.gatewayUrl && profile?.deviceSyncSecret) {
+                    const res = await deleteStaffOnVps(settings.gatewayUrl, profile.id, profile.deviceSyncSecret, {
                       id: r.id,
                       username: r.username,
                     });

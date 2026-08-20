@@ -13,6 +13,8 @@ interface Props {
   tenantId: string;
   onClose: () => void;
   onComplete: () => void;
+  /** Onboarding wagtynda diňe viewer rol — beýleki rollar gizlenýär */
+  forceViewer?: boolean;
 }
 
 const ROLES: { value: StaffRole; label: string }[] = [
@@ -22,7 +24,7 @@ const ROLES: { value: StaffRole; label: string }[] = [
   { value: 'viewer', label: 'Viewer' },
 ];
 
-export function QuickStaffCreate({ open, tenantId, onClose, onComplete }: Props) {
+export function QuickStaffCreate({ open, tenantId, onClose, onComplete, forceViewer }: Props) {
   const { addStaff } = useStaffStore();
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
@@ -175,28 +177,41 @@ export function QuickStaffCreate({ open, tenantId, onClose, onComplete }: Props)
           </div>
         </div>
 
-        <div className="space-y-1">
-          <div className="flex items-center gap-1">
-            <label className="text-xs text-neutral-400">Rol</label>
-            {isElevated && <Lock size={12} className="text-amber-500" />}
+        {!forceViewer && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-neutral-400">Rol</label>
+              {isElevated && <Lock size={12} className="text-amber-500" />}
+            </div>
+            <select
+              className={inputCls}
+              value={role}
+              onChange={(e) => handleRoleChange(e.target.value as StaffRole)}
+            >
+              {ROLES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            {isElevated && (
+              <p className="text-xs text-amber-500">
+                Bu role üçin administrator paroly gerekli
+              </p>
+            )}
           </div>
-          <select
-            className={inputCls}
-            value={role}
-            onChange={(e) => handleRoleChange(e.target.value as StaffRole)}
-          >
-            {ROLES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-          {isElevated && (
-            <p className="text-xs text-amber-500">
-              Bu role üçin administrator paroly gerekli
+        )}
+        {forceViewer && (
+          <div className="space-y-1">
+            <label className="text-xs text-neutral-400">Rol</label>
+            <div className="px-3 py-2 rounded-md bg-surface-raised border border-surface-border text-sm text-neutral-300">
+              Viewer (Gözegçi)
+            </div>
+            <p className="text-xs text-neutral-500">
+              Täze işgär diňe viewer rol bilen goşulýar
             </p>
-          )}
-        </div>
+          </div>
+        )}
 
         {isElevated && (
           <div className="space-y-1">
